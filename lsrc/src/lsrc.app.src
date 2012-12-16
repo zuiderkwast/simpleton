@@ -1,0 +1,7 @@
+{application, lsrc,
+ [{description, "A Lesser compiler"},
+  {vsn, "0.0.1"},
+  {modules, []},
+  {registered, []},
+  {env, []},
+  {applications, [kernel, stdlib, crypto]}]}.

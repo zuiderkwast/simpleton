@@ -1,0 +1,16 @@
+#!/usr/bin/env escript
+%% -*- erlang -*-
+%%! -pa ebin
+
+main([]) ->
+	main(["priv/lsr/test.lsr", "test"]);
+main([SrcFile, DstFile]) ->
+	{ok, Src} = file:read_file(SrcFile),
+	Dst = lsrc:compile(Src),
+	file:write_file([DstFile, ".c"], Dst),
+	Output = os:cmd(["gcc -Wall ", DstFile, ".c -o ", DstFile]),
+	io:format("~s", [Output]);
+
+main(_) ->
+	io:format("Usage: lsrc [ SRC DST ]~n~n"
+	          "By default, 'priv/lsr/test.lsr' is compiled to 'test'.~n").

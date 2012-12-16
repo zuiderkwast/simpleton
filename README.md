@@ -23,13 +23,11 @@ The project
 
 This is an experimental project, consisting of three parts:
 
-* this documentation,
-* a compiler, written in Erlang, which compiles Lesser to C code,
+* documentation,
+* a compiler `lsrc`, written in Erlang, which compiles Lesser to C code,
 * a runtime, written in C.
 
-The tree are evolving in parallel.
-
-Current status: This README only.  A compiler and runtime with a few features exist, yet to be commited.
+Current status: See the ROADMAP.md in `lsrc`.
 
 Other characteristics and features
 ----------------------------------
@@ -48,6 +46,8 @@ Other planned features are borrowed from various languages:
 * Lexical scope
 
 A _pattern_ is an expression without computational operations.  It must be able to do data decomposition, though.  Decomposition should be similar to data composition.  For example: In `[ "foo", a, b ] = [ "foo", 2, 3 ]`, the array on the right is matched agains the pattern on the left and the variables `a` and `b` are bound to the elements of the array.  Something similar for dicts (hash-tables) needs to be invented...
+
+See the `ideas` directory for some more ideas.
 
 
 Syntax

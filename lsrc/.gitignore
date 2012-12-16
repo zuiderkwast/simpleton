@@ -1,0 +1,5 @@
+ebin/*
+src/lsrlexer.erl
+src/lsrparser.erl
+test
+test.c
