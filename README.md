@@ -1,7 +1,7 @@
 Lesser is more
 ==============
 
-Lesser is a functional programming language project based on the idea of _garbage recycling_, which is an attempt to combine the following ideas:
+Lesser is a functional programming language project based on the idea of _value recycling_, which is an attempt to combine the following ideas:
 
 * Values should be immutable. (This is good for simplicity, correctness, thread-safety etc.)
 * Hash tables, arrays and strings are efficient data structures, thus useful language primitives.
@@ -14,7 +14,7 @@ a = [1, 2, 3]
 b = append(a, 4)
 ```
 
-The variable `a` is initialized to an array with 3 elements.  Then `4` is appended to a to produce another array, which is assigned to `b`.  Semantically, this is a new array, but since this is the last use of `a`, the array `a` can be re-used, and instead of copying it to create the new array, `4` can simply be appended the same array, which is then returned as a brand new array.  Semantically, it is not the same array, but since there are no references to `a`, the _garbage_ left over from `a` can be _recycled_.
+The variable `a` is initialized to an array with 3 elements.  Then `4` is appended to a to produce another array, which is assigned to `b`.  Semantically, this is a new array, but since this is the last use of `a`, the array `a` can be re-used, and instead of copying it to create the new array, `4` can simply be appended the same array, which is then returned as a brand new array.  Semantically, it is not the same array, but since there are no references to `a`, the value left over from `a` can be _recycled_.
 
 The same principle applies to hash tables and strings.
 
@@ -32,11 +32,11 @@ Current status: See the ROADMAP.md in `lsrc`.
 Other characteristics and features
 ----------------------------------
 
-This language is in a very early stage and not much has been decided.  The first goal is to create a proof of concept and to evaluate the garbage recycling concept.
+This language is in a very early stage and not much has been decided.  The first goal is to create a proof of concept and to evaluate the value recycling concept.
 
 A main idea is to keep things simple.  That should be the point of any high-level language.
 
-Aside from the _garbage recycling_ idea, the basic value types and their syntax are borrowed from JSON (http://json.org/) and JavaScript: `"abc"`, `42`, `3.14159`, `true`, `false`, `null`, `[1, 2, 3]`, `{"foo": true, "bar": 42}`.
+Aside from the _value recycling_ idea, the basic value types and their syntax are borrowed from JSON (http://json.org/) and JavaScript: `"abc"`, `42`, `3.14159`, `true`, `false`, `null`, `[1, 2, 3]`, `{"foo": true, "bar": 42}`.
 
 Other planned features are borrowed from various languages:
 

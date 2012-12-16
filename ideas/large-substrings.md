@@ -10,18 +10,20 @@ Influenced by how large binaries are handled in Erlang.
   transformed to smaller objects.
 * Checking the garbage ratio involves some algorithm to work on intervals.
 
-  struct stringblog {
+``` C
+struct stringblog {
     int ref_count;
     struct large_string refs[];
     int length;
     char data[1]; /* as large as needed */
-  };
+};
 
-  struct large_string {
+struct large_string {
     struct stringblob *data;
     int offset;
     int length;
-  };
+};
+```
 
 Garbage ratio algorithm
 -----------------------

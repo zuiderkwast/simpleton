@@ -12,10 +12,12 @@ Exists, with some differences, in
 
 Examples of white-space in Haskell:
 
-  if a then do b <- if c then 1
-                         else 2
-               return b + 3
-       else do return 4
+``` Haskell
+if a then do b <- if c then 1
+                       else 2
+             return b + 3
+     else do return 4
+```
 
 Maybe useful links:
 

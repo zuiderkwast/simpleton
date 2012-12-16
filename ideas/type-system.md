@@ -10,11 +10,13 @@ not be part of the language, except possibly as documentation.
 Idea: A fixed set of types with a defined hierarchy.  The type "any" is valid
 for any value, but use a more specific type when it can be infered.
 
+```
   number = integer | float
   scalar = number | string | boolean | null
   data   = scalar | [data] | {data}
   any    = data | [any] | {any} | any -> any | filehandle | (other resources)
                 | module | behaviour | ...
+```
 
 This implies subtype relations such as number <: scalar <: data <: any, which
 should be relatively simple to infer correctly using Damas-Hindly-Milner.
@@ -44,7 +46,9 @@ Type system milestone 2
 Type system milestone 3+
 ------------------------
 
+```
   tree :: ["node", tree, tree] | "leaf"
+```
 
 * Handle fixed sized arrays as tuples, and infer the type of each element
 * Add value types as the most specific type for scalars, to be able to use an
