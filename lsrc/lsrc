@@ -6,7 +6,7 @@ main([]) ->
 	main(["priv/lsr/test.lsr", "test"]);
 main([SrcFile, DstFile]) ->
 	{ok, Src} = file:read_file(SrcFile),
-	Dst = lsrc:compile(Src),
+	Dst = lsrc:compile(Src, true),
 	file:write_file([DstFile, ".c"], Dst),
 	Output = os:cmd(["gcc -Wall ", DstFile, ".c -o ", DstFile]),
 	io:format("~s", [Output]);

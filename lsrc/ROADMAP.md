@@ -13,15 +13,15 @@ values.
 * Non-literal strings, compiler [DONE]
 * String concatenation: compilation and basic type error detection [DONE]
 * Value recycling for string concatenation [DONE]
-* Pattern matching for pattern ::= unbound variable [DONE]
-* Pattern matching for pattern ::= literal or bound variable (remove from
-  grammar, reimplement in typechecker)
+* Pattern matching an unbound variable as the pattern [DONE]
+* Pattern matching a literal or bound varialbe as the pattern, typechecker [DONE]
+* Pattern matching with literal or bound variable, compiler
 * Matching expression ::= pattern match-operator expression (match or fail)
   [DONE]
 * Sequencing ";" [DONE]
 * Boolean literals [DONE]
 * If-then-else [DONE]
-* Representation of boolean values (masked in a pointer)
+* Representation of boolean values (masked in a pointer) [DONE]
 * Infer the last access of every variable [DONE]
 * Consistent discard of variables in unused branches, if-then-else [DONE]
 * Type assertions for concatenations in expressions

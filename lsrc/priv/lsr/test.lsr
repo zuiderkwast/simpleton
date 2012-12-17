@@ -1,6 +1,8 @@
 x = "What" ++ " is";
 y = " the";
+x = "What is";
 z = x ++ y ++ " Gigashadow?";
-if (false)
+condition = false;
+if (condition)
         then y
         else z

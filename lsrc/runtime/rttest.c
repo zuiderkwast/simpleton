@@ -8,18 +8,38 @@ int verbose = 1;
 void test(int cond, const char * msg);
 void test1(void);
 void test2(void);
+void test3(void);
 
 int main() {
 	test1();
 	test2();
+	test3();
 	return 0;
 }
 
+/*
+ * Equality checks
+ */
+void test3(void) {
+	lsr_tagged_t *s1 = lsr_create_string(3, "foo"),
+	             *s2 = lsr_string_literal("foo"),
+	             *b  = lsr_bool_to_ptr(true);
+	printf("=== Test 3: equality checks ===\n");
+	test(!lsr_equals(b, s1), "Boolean != string");
+	test(lsr_equals(s1, s2), "Allocated string 'foo' == Literal 'foo'");
+}
+
+/*
+ * Booleans, masked in a pointer
+ */
 void test2(void) {
-	size_t t = 7, f = 3;
+	lsr_tagged_t *t = lsr_bool_to_ptr(true),
+	             *f = lsr_bool_to_ptr(false);
 	printf("=== Test 2: true and false ===\n");
-	test(lsr_boolean_value(t), "Boolean true");
-	test(!lsr_boolean_value(f), "Boolean false");
+	lsr_ensure_boolean(t);
+	lsr_ensure_boolean(f);
+	test(lsr_ptr_to_bool(t), "Boolean true");
+	test(!lsr_ptr_to_bool(f), "Boolean false");
 }
 
 /*

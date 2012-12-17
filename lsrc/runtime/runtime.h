@@ -60,26 +60,47 @@ typedef struct {
 	char type;
 } lsr_tagged_t;
 
-/* Type tags for the boxed type */
+/* Type tags for the tagged type */
 #define LSR_STRING_CONST_PREFIX "a"
 #define LSR_STRING_CONST        'a'
 #define LSR_STRING              'b'
 
 /*
- * Booleans, stored inside pointers as 01111x11, where x is 1 for true,
- * 0 for false.  In ascii, these are '?' (true) and ';' (false).
+ * Pointers have 00, while masked types have a 1 in one of the two least
+ * significant bits.
+ */
+#define lsr_is_masked(ptr) ((size_t)(ptr) & 3)
+
+
+/*
+ * Booleans, stored inside pointers as 01111x10, where x is 1 for true,
+ * 0 for false.  In ascii, these are '>' (true) and ':' (false).
  */
 
-/* Convert a pointer to boolean, and raise an error if not a boolean */
+/*
+ * Convert a pointer to boolean.  If it's not a boolean, the result is
+ * undefined.  Use lsr_is_boolean if you need to check in advance.
+ */
 static inline bool lsr_ptr_to_bool(lsr_tagged_t * ptr) {
 	size_t n = (size_t)ptr;
-	if ((n & ';') != ';')
-		lsr_error("Non-boolean value in lsr_ptr_to_bool");
 	return (bool)(n & ~';');
 }
 
-#define lsr_bool_to_ptr(yes) ((lsr_tagged_t *)((yes) ? '?' : ';'))
+static inline lsr_tagged_t * lsr_bool_to_ptr(bool yes) {
+	return (lsr_tagged_t *)(size_t)(yes ? '>' : ':');
+}
 
+static inline bool lsr_is_boolean(lsr_tagged_t * ptr) {
+	return ((size_t)(ptr) & ':') == ':';
+}
+
+/*
+ * Check if a pointer contains a masked boolean and raise an error if not.
+ */
+static inline void lsr_ensure_boolean(lsr_tagged_t * ptr) {
+	if (!lsr_is_boolean(ptr))
+		lsr_error("Non-boolean value in lsr_ensure_boolean");
+}
 
 /*
  * Ref-counted, allocated string.
@@ -113,6 +134,9 @@ typedef struct {
 	char chars[1];  /* nul terminated string */
 } lsr_string_const_t;
 
+#define lsr_string_literal(literal) \
+	(lsr_tagged_t *) LSR_STRING_CONST_PREFIX literal
+
 /*
  * general stuff for lsr_tagged_t
  */
@@ -121,6 +145,8 @@ typedef struct {
 
 /* free if ref-counter == 0 */
 static inline void lsr_free_unused(lsr_tagged_t *ptr) {
+	if (lsr_is_masked(ptr))
+		return;
 	switch (lsr_type(ptr)) {
 		case LSR_STRING_CONST:
 			/* nothing to free for literals */
@@ -169,6 +195,12 @@ static inline size_t lsr_get_refc(lsr_tagged_t *ptr) {
 
 
 /* string functions */
+
+static inline bool lsr_is_string(lsr_tagged_t *ptr) {
+	if (lsr_is_masked(ptr))
+		return false;
+	return lsr_type(ptr) == LSR_STRING_CONST || lsr_type(ptr) == LSR_STRING;
+}
 
 /* returns a pointer to the char array in a tagged string */
 static inline char * lsr_chars(lsr_tagged_t *ptr) {
@@ -227,7 +259,7 @@ static inline lsr_tagged_t *lsr_reuse_string(lsr_tagged_t *ptr, size_t len) {
 }
 
 /*
- * Returns a pointer to a new string, with refc == 1.
+ * Returns a pointer to a new string, with refc == 0.
  *
  * Frees a and b if they are unused (i.e. if their refc == 0).
  */
@@ -254,4 +286,23 @@ lsr_tagged_t *lsr_string_concat(lsr_tagged_t *a,
 static inline
 void lsr_print_string(lsr_tagged_t *s) {
 	printf("%s", lsr_chars(s));
+}
+
+/*
+ * Compare any two values for equality.
+ */
+static inline bool lsr_equals(lsr_tagged_t *a, lsr_tagged_t *b) {
+		lsr_print_string(a); printf("=="); lsr_print_string(b); printf("\n");
+	if (a == b)
+		return true;
+	/* masked (boolean, int, null) in the pointer */
+	if (lsr_is_masked(a) || lsr_is_masked(b)) {
+		printf("Oops, a or b is masked. %p, %p\n", a, b);
+		return false;
+	}
+	/* string (literals and allocated) */
+	if (lsr_is_string(a) && lsr_is_string(b)) {
+		return strcmp(lsr_chars(a), lsr_chars(b)) == 0;
+	}
+	return false;
 }

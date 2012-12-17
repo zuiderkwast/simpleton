@@ -113,6 +113,7 @@ check_prog({prog, E}, Scope) ->
 	AnnotatedProg = {prog, Ae2, Type, LocalVars, Accesses2},
 	{AnnotatedProg, Scope3}.
 
+%% @doc Checks a pattern
 -spec match(expr(), typename(), nested_scope()) -> {aexpr(), nested_scope()}.
 match({var, Line, Name}, T, Scope) ->
 	case lookup_var(Name, Scope) of
