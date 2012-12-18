@@ -23,6 +23,7 @@ if|then|else : {token, {list_to_atom(TokenChars),  TokenLine}}.
 \]      : {token, {']', TokenLine}}.
 ,       : {token, {',', TokenLine}}.
 
+#[^\n]*    : skip_token.
 [\s\n\r\t] : skip_token.
 
 Erlang code.

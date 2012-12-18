@@ -58,13 +58,13 @@ void test1(void) {
 
 	test(lsr_alloc_bytes_cnt == 0, "Zero allocation at start");
 
-	a = (lsr_tagged_t *) LSR_STRING_CONST_PREFIX "hej";
-	b = (lsr_tagged_t *) LSR_STRING_CONST_PREFIX "du";
+	a = lsr_string_literal("hej");
+	b = lsr_string_literal("du");
 
 	test(lsr_strlen(a) == 3,
-	      "Length of 'hej' == 3");
-	test(a->type == LSR_STRING_CONST,
-	      "The string a is a literal");
+	     "Length of 'hej' == 3");
+	test(lsr_ptr_is_string_const(a),
+	     "The string a is a literal");
 
 	/* c = a + b */
 	c = lsr_string_concat(a, b);

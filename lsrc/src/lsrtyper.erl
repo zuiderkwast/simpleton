@@ -114,8 +114,8 @@ check_prog({prog, E}, Scope) ->
 	{AnnotatedProg, Scope3}.
 
 %% @doc Checks a pattern
--spec match(expr(), typename(), nested_scope()) -> {aexpr(), nested_scope()}.
-match({var, Line, Name}, T, Scope) ->
+-spec t_pattern(expr(), typename(), nested_scope()) -> {aexpr(), nested_scope()}.
+t_pattern({var, Line, Name}, T, Scope) ->
 	case lookup_var(Name, Scope) of
 		undefined ->
 			% New variable. Bind and add it to the scope with type T.
@@ -132,16 +132,16 @@ match({var, Line, Name}, T, Scope) ->
 							   " Got ~p, expected ~p.",
 							   [Name, Line, BadT, T]))
 	end;
-match(Lit = {literal, {Type, Line, Data}}, T, _Scope) ->
+t_pattern(Lit = {literal, {Type, Line, Data}}, T, Scope) ->
 	case Type of
 		T ->
-			Lit;
+			{Lit, Scope};
 		BadT ->
 			throw(io_lib:format("Found ~p literal where ~p expected,"
 			                   " on line ~p, near ~p.~n",
 			                   [BadT, T, Line, Data]))
 	end;
-match(Any, _T, _Scope) ->
+t_pattern(Any, _T, _Scope) ->
 	throw(io_lib:format("Invalid pattern ~p", [Any])).
 
 
@@ -224,7 +224,7 @@ t({assign, Pattern, Expr}, Scope) ->
 	{Aexpr, Scope1} = t(Expr, Scope),
 	T = get_type(Aexpr),
 	A1 = aexpr_get_accesses(Aexpr),
-	{Apattern, Scope2} = match(Pattern, T, Scope1),
+	{Apattern, Scope2} = t_pattern(Pattern, T, Scope1),
 	A2 = aexpr_get_accesses(Apattern),
 	A = lsrvarsets:union(A1, A2),
 	Ae = {assign, Apattern, Aexpr, T, A},

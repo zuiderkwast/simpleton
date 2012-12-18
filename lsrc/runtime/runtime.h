@@ -60,10 +60,9 @@ typedef struct {
 	char type;
 } lsr_tagged_t;
 
-/* Type tags for the tagged type */
-#define LSR_STRING_CONST_PREFIX "a"
-#define LSR_STRING_CONST        'a'
-#define LSR_STRING              'b'
+/* Type tags for the tagged type (char) */
+/* string literals:             '\01' .. '\04' */
+#define LSR_STRING              '\05'
 
 /*
  * Pointers have 00, while masked types have a 1 in one of the two least
@@ -71,6 +70,7 @@ typedef struct {
  */
 #define lsr_is_masked(ptr) ((size_t)(ptr) & 3)
 
+#define lsr_ptr_is_string_const(ptr) ((ptr)->type <= '\04')
 
 /*
  * Booleans, stored inside pointers as 01111x10, where x is 1 for true,
@@ -83,7 +83,7 @@ typedef struct {
  */
 static inline bool lsr_ptr_to_bool(lsr_tagged_t * ptr) {
 	size_t n = (size_t)ptr;
-	return (bool)(n & ~';');
+	return (bool)(n & ~':');
 }
 
 static inline lsr_tagged_t * lsr_bool_to_ptr(bool yes) {
@@ -121,21 +121,16 @@ struct lsr_string_nodata {
 };
 
 /*
- * Size of allocated string
+ * Size of allocated string object (including header)
  */
 #define SIZE_OF_STRING(len) \
 	(sizeof(struct lsr_string_nodata) + (len) + 1)
 
 /*
- * String literal (null terminated)
+ * Align string literals to 4 bytes boundary using padding and rounding up
  */
-typedef struct {
-	char type;      /* 'a' */
-	char chars[1];  /* nul terminated string */
-} lsr_string_const_t;
-
-#define lsr_string_literal(literal) \
-	(lsr_tagged_t *) LSR_STRING_CONST_PREFIX literal
+#define lsr_string_literal(str) \
+	((lsr_tagged_t *)(((size_t)("\04\03\02\01" str) + 3) & ~3))
 
 /*
  * general stuff for lsr_tagged_t
@@ -145,12 +140,9 @@ typedef struct {
 
 /* free if ref-counter == 0 */
 static inline void lsr_free_unused(lsr_tagged_t *ptr) {
-	if (lsr_is_masked(ptr))
-		return;
+	if (lsr_is_masked(ptr) || lsr_ptr_is_string_const(ptr))
+		return; /* nothing to free */
 	switch (lsr_type(ptr)) {
-		case LSR_STRING_CONST:
-			/* nothing to free for literals */
-			break;
 		case LSR_STRING: {
 			lsr_string_t *s = (lsr_string_t *)ptr;
 			if (s->refc == 0) lsr_free(s, SIZE_OF_STRING(s->len));
@@ -163,9 +155,9 @@ static inline void lsr_free_unused(lsr_tagged_t *ptr) {
 
 /* ref-counter manipulation */
 static inline void lsr_refc_add(lsr_tagged_t *ptr, size_t delta) {
+	if (lsr_is_masked(ptr) || lsr_ptr_is_string_const(ptr))
+		return; /* nothing to free */
 	switch (lsr_type(ptr)) {
-		case LSR_STRING_CONST:
-			break; /* no refc */
 		case LSR_STRING:
 			((lsr_string_t *)ptr)->refc += delta;
 			break;
@@ -197,32 +189,31 @@ static inline size_t lsr_get_refc(lsr_tagged_t *ptr) {
 /* string functions */
 
 static inline bool lsr_is_string(lsr_tagged_t *ptr) {
-	if (lsr_is_masked(ptr))
-		return false;
-	return lsr_type(ptr) == LSR_STRING_CONST || lsr_type(ptr) == LSR_STRING;
+	return !lsr_is_masked(ptr) &&
+	       (lsr_ptr_is_string_const(ptr) || lsr_type(ptr) == LSR_STRING);
+}
+
+/* the pointer must be a string const */
+static inline char * lsr_string_const_chars(lsr_tagged_t *ptr) {
+	char *s = (char *)ptr;
+	return s + s[0];
 }
 
 /* returns a pointer to the char array in a tagged string */
 static inline char * lsr_chars(lsr_tagged_t *ptr) {
-	switch (lsr_type(ptr)) {
-		case LSR_STRING_CONST:
-			return ((lsr_string_const_t *)ptr)->chars;
-		case LSR_STRING:
-			return ((lsr_string_t *)ptr)->chars;
-		default:
-			bad_type_error(ptr, "lsr_chars");
-	}
+	if (lsr_ptr_is_string_const(ptr))
+		return lsr_string_const_chars(ptr);
+	if (lsr_type(ptr) == LSR_STRING)
+		return ((lsr_string_t *)ptr)->chars;
+	bad_type_error(ptr, "lsr_chars");
 }
 
 static inline size_t lsr_strlen(lsr_tagged_t *ptr) {
-	switch (lsr_type(ptr)) {
-		case LSR_STRING_CONST:
-			return strlen(((lsr_string_const_t *)ptr)->chars);
-		case LSR_STRING:
-			return ((lsr_string_t *)ptr)->len;
-		default:
-			bad_type_error(ptr, "lsr_strlen");
-	}
+	if (lsr_ptr_is_string_const(ptr))
+		return strlen(lsr_string_const_chars(ptr));
+	if (lsr_type(ptr) == LSR_STRING)
+		return ((lsr_string_t *)ptr)->len;
+	bad_type_error(ptr, "lsr_strlen");
 }
 
 /*
@@ -292,17 +283,13 @@ void lsr_print_string(lsr_tagged_t *s) {
  * Compare any two values for equality.
  */
 static inline bool lsr_equals(lsr_tagged_t *a, lsr_tagged_t *b) {
-		lsr_print_string(a); printf("=="); lsr_print_string(b); printf("\n");
 	if (a == b)
 		return true;
 	/* masked (boolean, int, null) in the pointer */
-	if (lsr_is_masked(a) || lsr_is_masked(b)) {
-		printf("Oops, a or b is masked. %p, %p\n", a, b);
+	if (lsr_is_masked(a) || lsr_is_masked(b))
 		return false;
-	}
-	/* string (literals and allocated) */
-	if (lsr_is_string(a) && lsr_is_string(b)) {
+	/* strings (literals and allocated) */
+	if (lsr_is_string(a) && lsr_is_string(b))
 		return strcmp(lsr_chars(a), lsr_chars(b)) == 0;
-	}
 	return false;
 }

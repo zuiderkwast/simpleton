@@ -104,10 +104,18 @@ c_match({bind, _, VarName, VarType}, Value, ValueType,
 	 [], BindCode, State};
 
 c_match(Var = {var, _, _, VarType, _}, Value, ValueType, State) ->
-	% Assert subtype
+	% Assert subtype (should be infered. TODO: move to typechecker)
 	true = lsrtyper:is_subtype_of(ValueType, VarType),
 	% Compile the var access
 	{Decl, Code, Name, State2} = c(Var, State),
+	SuccessBool = ["lsr_equals(", Name, ", ", Value, ")"],
+	{Decl, Code, SuccessBool, [], [], State2};
+
+c_match(Lit = {literal, _}, Value, ValueType, State) ->
+	% Assert supertype (should be infered. TODO: move to typechecker)
+	true = lsrtyper:is_subtype_of(lsrtyper:get_type(Lit), ValueType),
+	% Compile the literal
+	{Decl, Code, Name, State2} = c(Lit, State),
 	SuccessBool = ["lsr_equals(", Name, ", ", Value, ")"],
 	{Decl, Code, SuccessBool, [], [], State2}.
 
@@ -223,9 +231,9 @@ c({literal, {boolean, _, Content}}, State = #state{indent=Indent}) ->
 c({literal, {string, _, Content}}, State = #state{indent=Indent}) ->
 	% create boxed type and a new tmpvar
 	{Name, State2} = new_tmpvar(State),
-	Decl = [indent(Indent), c_type(string), " ", Name,
-	        " __attribute__((aligned(4)))",
-	        " = ", c_string_literal(Content), ";\n"],
+	Decl = [indent(Indent),
+	        c_type(string), " ", Name, " = ",
+	        c_string_literal(Content), ";\n"],
 	{Decl, [], Name, State2}.
 
 discard_vars(Names, Indent) ->

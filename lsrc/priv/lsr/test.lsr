@@ -1,7 +1,8 @@
-x = "What" ++ " is";
+x = "What" ++ " is"; # Bind free var x
+x = "What is";       # Match bound var x
+"What is" = x;       # Match a literal
 y = " the";
-x = "What is";
-z = x ++ y ++ " Gigashadow?";
+z = x ++ y ++ " Gigashadow?"; # Concat
 condition = false;
 if (condition)
         then y
