@@ -15,7 +15,7 @@ values.
 * Value recycling for string concatenation [DONE]
 * Pattern matching an unbound variable as the pattern [DONE]
 * Pattern matching a literal or bound varialbe as the pattern, typechecker [DONE]
-* Pattern matching with literal or bound variable, compiler
+* Pattern matching with literal or bound variable, compiler [DONE]
 * Matching expression ::= pattern match-operator expression (match or fail)
   [DONE]
 * Sequencing ";" [DONE]
@@ -26,12 +26,12 @@ values.
 * Consistent discard of variables in unused branches, if-then-else [DONE]
 * Type assertions for concatenations in expressions
 * Documentation of the language and the implementation so far
-* Fix the directory structure and create repository
+* Fix the directory structure and create repository [DONE]
 
 Milestone 2: Logic operations
 
-* Assertion that a value is boolean, that will raise an error otherwise
-* Conversion to and from masked and C booleans. [done?]
+* Assertion that a value is boolean, that will raise an error otherwise [DONE]
+* Conversion to and from masked and C booleans. [DONE]
 * And-or-not in lexer and parser
 * Type check and-or-not
 * Detect last var accesses and discards, and-or-not (short-circuit evaluation)
