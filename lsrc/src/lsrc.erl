@@ -39,7 +39,7 @@ compile(String, Verbose) when is_list(String) ->
 			io:format("~s~n", [Message1])
 	end.
 
-c_prog({prog, E, string, Vars, _OuterVars=[]}) ->
+c_prog({prog, E, Type, Vars, _OuterVars=[]}) ->
 	State = #state{},
 	State1 = indent_more(State),
 	#state{indent = Indent} = State1,
@@ -63,6 +63,11 @@ c_prog({prog, E, string, Vars, _OuterVars=[]}) ->
 	 Code,
 	 "\n",
 	 indent(Indent), "/* print the return value */\n",
+	 %% Assert that the return value is a string
+	 case Type of
+		string -> [];
+		_      -> [indent(Indent), "lsr_assert_string(", RetVar, ");\n"]
+	 end,	
 	 indent(Indent), "printf(\"%s\\n\", lsr_chars(", RetVar, "));\n",
 	 indent(Indent), "lsr_free_unused(", RetVar, ");\n",
 	 case MemDebug of
@@ -155,7 +160,7 @@ c({'if', E1, E2, E3, T, _As}, State = #state{indent=Indent}) ->
 	{Decl, Code, RetVar, State5};
 
 % Sequence: Discard the first value and continue. Keep only the last value. 
-c({seq, E1, E2, string, _Accesses}, State = #state{indent=Indent}) ->
+c({seq, E1, E2, _Type, _Accesses}, State = #state{indent=Indent}) ->
 	{Decl1, Code1, DeadVar, State2} = c(E1, State),
 	{Decl2, Code2, RetVar, State3} = c(E2, State2),
 	FreeCode = case E1 of
@@ -173,13 +178,22 @@ c({seq, E1, E2, string, _Accesses}, State = #state{indent=Indent}) ->
 	{[Decl1, Decl2], [Code1, FreeCode, Code2], RetVar, State3};
 
 % Concatenation
-c({concat, Left, Right, string, _Accesses}, State = #state{indent=Indent}) ->
+c({concat, Left, Right, _Type, _Accesses}, State = #state{indent=Indent}) ->
 	{LeftDecl, LeftCode, LeftVar, State2} = c(Left, State),
+	%% If it's not infered to be a string, add a runtime assertion
+	AssertLeft = case lsrtyper:get_type(Left) of
+		string -> [];
+		_      -> [indent(Indent), "lsr_assert_string(", LeftVar, ");\n"]
+	end,	
 	{RightDecl, RightCode, RightVar, State3} = c(Right, State2),
+	AssertRight = case lsrtyper:get_type(Right) of
+		string -> [];
+		_      -> [indent(Indent), "lsr_assert_string(", RightVar, ");\n"]
+	end,
 	{RetVar, State4} = new_tmpvar(State3),
 	ConcatCode = [indent(Indent), RetVar, " = lsr_string_concat(", LeftVar, ", ", RightVar, ");\n"],
 	{[LeftDecl, RightDecl, decl(RetVar, string, Indent)],
-	 [LeftCode, RightCode, ConcatCode],
+	 [LeftCode, AssertLeft, RightCode, AssertRight, ConcatCode],
 	 RetVar,
 	 State4};
 
@@ -201,18 +215,19 @@ c({assign, Pattern, Expr, ExprType, _Accesses},
      State3};
 
 % Variable access
-c({var, _, Name, string, AccessType}, State = #state{indent=Indent}) ->
-	Code = case AccessType of
-		lastaccess -> [indent(Indent), "lsr_decref(", Name, ");",
-		               " /* last access */\n"];
-		access     -> []
-	end,
-	{[], Code, Name, State};
 c({var, _, Name, boolean, AccessType}, State = #state{indent=Indent}) ->
 	% reference counted
 	Code = case AccessType of
 		lastaccess -> [indent(Indent),
 		               "/* last access of boolean '", Name, "' */\n"];
+		access     -> []
+	end,
+	{[], Code, Name, State};
+c({var, _, Name, Type, AccessType}, State = #state{indent=Indent})
+			when Type =:= string; Type =:= any ->
+	Code = case AccessType of
+		lastaccess -> [indent(Indent), "lsr_decref(", Name, ");",
+		               " /* last access */\n"];
 		access     -> []
 	end,
 	{[], Code, Name, State};

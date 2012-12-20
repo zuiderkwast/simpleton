@@ -24,7 +24,7 @@ values.
 * Representation of boolean values (masked in a pointer) [DONE]
 * Infer the last access of every variable [DONE]
 * Consistent discard of variables in unused branches, if-then-else [DONE]
-* Type assertions for concatenations in expressions
+* Type assertions for concatenations in expressions [DONE]
 * Documentation of the language and the implementation so far
 * Fix the directory structure and create repository [DONE]
 
@@ -38,9 +38,8 @@ Milestone 2: Logic operations
 
 Milestone 3: String concatenation in patterns
 
-* Add "size known" annotation on strings (in patterns)
-* Check that at least one operand of ++ in a pattern has a fixed or computable
-  length
+* Add "fixed" annotation in patterns
+* Check that at least one operand of ++ in a pattern is fixed
 * Compile patterns containing string concatenation
 
 Milestone 4: Arrays

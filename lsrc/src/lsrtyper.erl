@@ -133,13 +133,13 @@ t_pattern({var, Line, Name}, T, Scope) ->
 							   [Name, Line, BadT, T]))
 	end;
 t_pattern(Lit = {literal, {Type, Line, Data}}, T, Scope) ->
-	case Type of
-		T ->
+	case is_subtype_of(Type, T) of
+		true ->
 			{Lit, Scope};
-		BadT ->
+		false ->
 			throw(io_lib:format("Found ~p literal where ~p expected,"
 			                   " on line ~p, near ~p.~n",
-			                   [BadT, T, Line, Data]))
+			                   [Type, T, Line, Data]))
 	end;
 t_pattern(Any, _T, _Scope) ->
 	throw(io_lib:format("Invalid pattern ~p", [Any])).
@@ -207,13 +207,10 @@ t({concat, E1, E2}, Scope) ->
 	{Ae2, Scope2} = t(E2, Scope1),
 	T1  = get_type(Ae1),
 	T2  = get_type(Ae2),
-	%% The type rule is still very limited
 	%% TODO Better message when mismatch, e.g. include line number.
-	%T = T1 = T2, % = string,
-	T1 =:= string orelse T1 =:= array orelse T1 =:= any orelse throw(["Can't concatenate ", T1]),
-	T2 =:= string orelse T2 =:= array orelse T2 =:= any orelse throw(["Can't concatenate ", T2]),
 	T = get_common_supertype(T1, T2),
-	T1 =:= T orelse T2 =:= T orelse throw(["Can't concatenate ", T1, " with ", T2]),
+	is_subtype_of(string, T) orelse is_subtype_of(array, T)
+		orelse throw(["Can't concatenate ", T1, " with ", T2]),
 	A1 = aexpr_get_accesses(Ae1),
 	A2 = aexpr_get_accesses(Ae2),
 	A = lsrvarsets:union(A1, A2),

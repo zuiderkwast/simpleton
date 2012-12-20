@@ -72,6 +72,13 @@ typedef struct {
 
 #define lsr_ptr_is_string_const(ptr) ((ptr)->type <= '\04')
 
+#define lsr_ptr_is_string(ptr) ((ptr)->type <= '\05')
+
+static inline void lsr_assert_string(lsr_tagged_t *ptr) {
+	if (lsr_is_masked(ptr) || !lsr_ptr_is_string(ptr))
+		lsr_error("String expected.");
+}
+
 /*
  * Booleans, stored inside pointers as 01111x10, where x is 1 for true,
  * 0 for false.  In ascii, these are '>' (true) and ':' (false).

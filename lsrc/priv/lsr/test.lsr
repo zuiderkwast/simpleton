@@ -4,6 +4,7 @@ x = "What is";       # Match bound var x
 y = " the";
 z = x ++ y ++ " Gigashadow?"; # Concat
 condition = false;
-if (condition)
-        then y
-        else z
+w = if (condition)
+        then true
+        else z;
+w
