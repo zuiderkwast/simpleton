@@ -127,8 +127,8 @@ c_match(Lit = {literal, _}, Value, ValueType, State) ->
 c({'if', E1, E2, E3, T, _As}, State = #state{indent=Indent}) ->
 	% TODO Free the input values (i.e. the condition).
 	% TODO Free all vars in the dead branch which would be last accessed there.
-	A2 = lsrtyper:aexpr_get_accesses(E2),
-	A3 = lsrtyper:aexpr_get_accesses(E3),
+	A2 = lsrtyper:get_accesses(E2),
+	A3 = lsrtyper:get_accesses(E3),
 	AccessedInElseOnly = lsrvarsets:subtract(A3, A2),
 	AccessedInThenOnly = lsrvarsets:subtract(A2, A3),
 	Discard2 = discard_vars(AccessedInElseOnly, Indent + 1),
@@ -169,7 +169,7 @@ c({seq, E1, E2, _Type, _Accesses}, State = #state{indent=Indent}) ->
 			% access.
 			[];
 		_ ->
-			Accesses = lsrtyper:aexpr_get_accesses(E2),
+			Accesses = lsrtyper:get_accesses(E2),
 			case lsrvarsets:is_element(DeadVar, Accesses) of
 				false -> [indent(Indent), "lsr_free_unused(", DeadVar, ");\n"];
 				true  -> [] % DeadVar will be used later, so refc can't be zero here.
@@ -178,7 +178,7 @@ c({seq, E1, E2, _Type, _Accesses}, State = #state{indent=Indent}) ->
 	{[Decl1, Decl2], [Code1, FreeCode, Code2], RetVar, State3};
 
 % Concatenation
-c({concat, Left, Right, _Type, _Accesses}, State = #state{indent=Indent}) ->
+c({concat, Left, Right, true, _Type, _Accesses}, State = #state{indent=Indent}) ->
 	{LeftDecl, LeftCode, LeftVar, State2} = c(Left, State),
 	%% If it's not infered to be a string, add a runtime assertion
 	AssertLeft = case lsrtyper:get_type(Left) of

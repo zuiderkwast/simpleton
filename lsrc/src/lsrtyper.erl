@@ -1,7 +1,7 @@
 %% @doc Typechecker/inferer/annotator for the syntax tree produced by the parser
 -module(lsrtyper).
 
--export([annotate/1, aexpr_get_accesses/1, get_type/1, is_subtype_of/2]).
+-export([annotate/1, get_accesses/1, get_type/1, is_subtype_of/2]).
 
 -type expr() :: lsrparser:expr().
 -type prog() :: lsrparser:prog().
@@ -21,34 +21,35 @@
 %% Annotated AST
 -type accesstype() :: access | lastaccess.
 
-%% @doc Annotated variable
--type avar() :: {var, integer(), string(), typename(), accesstype()}.
-
 %% @doc Annotated expression
--type aexpr() :: avar()
-              | literal()
-              | {binop(), aexpr(), aexpr(),
-                 typename(), lsrvarsets:varset()}
-              | {assign, aexpr(), aexpr(), typename(), lsrvarsets:varset()}
-              | {'if', aexpr(), aexpr(), aexpr(), typename(), lsrvarsets:varset()}
-              | {array, Length::integer(), aarraycons(), lsrvarsets:varset()}.
+-type aexpr() :: {var, Line::integer(), string(), typename(), accesstype()}
+               | {bind, Line::integer(), string(), typename()} % pattern only
+               | literal()
+               | {concat, aexpr(), aexpr(),
+                  Fixed::boolean(), typename(), lsrvarsets:varset()}
+               | {seq, aexpr(), aexpr(),
+                  typename(), lsrvarsets:varset()}
+               | {assign, aexpr(), aexpr(), typename(), lsrvarsets:varset()}
+               | {'if', aexpr(), aexpr(), aexpr(), typename(), lsrvarsets:varset()}
+               | {array, Length::integer(), aarraycons(), lsrvarsets:varset()}.
 
 -type aarraycons() :: {arraycons, aexpr(), aarraycons(), lsrvarsets:varset()} | nil.
 
 %% @doc Annotated program tree
--type aprog()  :: {prog, Body::aexpr(), ReturnType::typename(),
+-type aprog() :: {prog, Body::aexpr(), ReturnType::typename(),
                   Locals::scope(), AccessesToOuterVars::lsrvarsets:varset()}.
 
 %% @doc Returns the type of an annotated expression.
 -spec get_type(aexpr()) -> typename().
 get_type(Ae) ->
 	case Ae of
-		{var, _, _, T, _}     -> T;
-		{literal, {T, _, _}}  -> T;
-		{array, _, _, _}      -> array;
-		{assign, _, _, T, _}  -> T;
-		{'if', _, _, _, T, _} -> T;
-		{_Binop, _, _, T, _}  -> T
+		{var, _, _, T, _}       -> T;
+		{literal, {T, _, _}}    -> T;
+		{array, _, _, _}        -> array;
+		{concat, _, _, _, T, _} -> T;
+		{seq, _, _, T, _}       -> T;
+		{assign, _, _, T, _}    -> T;
+		{'if', _, _, _, T, _}   -> T
 	end.
 
 -spec is_subtype_of(typename(), typename()) -> boolean().
@@ -107,7 +108,7 @@ check_prog({prog, E}, Scope) ->
 	InnerScope = [[] | Scope],
 	{Ae, [LocalVars | Scope3]} = t(E, InnerScope),
 	Ae2 = mark_last_accesses(Ae, LocalVars),
-	Accesses = aexpr_get_accesses(Ae2),
+	Accesses = get_accesses(Ae2),
 	Accesses2 = lsrvarsets:subtract(Accesses, scope_to_varset(LocalVars)),
 	Type = get_type(Ae2),
 	AnnotatedProg = {prog, Ae2, Type, LocalVars, Accesses2},
@@ -141,6 +142,23 @@ t_pattern(Lit = {literal, {Type, Line, Data}}, T, Scope) ->
 			                   " on line ~p, near ~p.~n",
 			                   [Type, T, Line, Data]))
 	end;
+t_pattern({concat, P1, P2}, T, Scope) ->
+	{Ap1, Scope1} = t_pattern(P1, Scope),
+	{Ap2, Scope2} = t_pattern(P2, Scope1),
+	T1  = get_type(Ap1),
+	T2  = get_type(Ap2),
+	%% TODO Better message when mismatch, e.g. include line number.
+	T = get_common_supertype(T1, T2),
+	is_subtype_of(string, T) orelse is_subtype_of(array, T)
+		orelse throw(["Can't concatenate ", T1, " with ", T2]),
+	F1 = is_fixed(Ap1),
+	F2 = is_fixed(Ap2),
+	F1 or F2 orelse throw(["At least one operand of ++ must be fixed."]),
+	A1 = get_accesses(Ap1),
+	A2 = get_accesses(Ap2),
+	A = lsrvarsets:union(A1, A2),
+	Ae = {concat, Ae1, Ap2, F1 and F2, T, A},
+	{Ae, Scope2};
 t_pattern(Any, _T, _Scope) ->
 	throw(io_lib:format("Invalid pattern ~p", [Any])).
 
@@ -164,8 +182,8 @@ t({seq, E1, E2}, Scope) ->
 	{Ae1, Scope1} = t(E1, Scope),
 	{Ae2, Scope2} = t(E2, Scope1),
 	T  = get_type(Ae2),
-	A1 = aexpr_get_accesses(Ae1),
-	A2 = aexpr_get_accesses(Ae2),
+	A1 = get_accesses(Ae1),
+	A2 = get_accesses(Ae2),
 	A = lsrvarsets:union(A1, A2),
 	Ae = {seq, Ae1, Ae2, T, A},
 	{Ae, Scope2};
@@ -195,9 +213,9 @@ t({'if', E1, E2, E3}, Scope) ->
 	T3 = get_type(Ae3),
 	T = get_common_supertype(T2, T3),
 	%assert_type(T, T1, "The 'else' must match the 'then' clause"),
-	A1 = aexpr_get_accesses(Ae1),
-	A2 = aexpr_get_accesses(Ae2),
-	A3 = aexpr_get_accesses(Ae3),
+	A1 = get_accesses(Ae1),
+	A2 = get_accesses(Ae2),
+	A3 = get_accesses(Ae3),
 	A = lsrvarsets:union([A1, A2, A3]),
 	{{'if', Ae1, Ae2, Ae3, T, A}, Scope3};
 
@@ -211,18 +229,18 @@ t({concat, E1, E2}, Scope) ->
 	T = get_common_supertype(T1, T2),
 	is_subtype_of(string, T) orelse is_subtype_of(array, T)
 		orelse throw(["Can't concatenate ", T1, " with ", T2]),
-	A1 = aexpr_get_accesses(Ae1),
-	A2 = aexpr_get_accesses(Ae2),
+	A1 = get_accesses(Ae1),
+	A2 = get_accesses(Ae2),
 	A = lsrvarsets:union(A1, A2),
-	Ae = {concat, Ae1, Ae2, T, A},
+	Ae = {concat, Ae1, Ae2, true, T, A},
 	{Ae, Scope2};
 
 t({assign, Pattern, Expr}, Scope) ->
 	{Aexpr, Scope1} = t(Expr, Scope),
 	T = get_type(Aexpr),
-	A1 = aexpr_get_accesses(Aexpr),
+	A1 = get_accesses(Aexpr),
 	{Apattern, Scope2} = t_pattern(Pattern, T, Scope1),
-	A2 = aexpr_get_accesses(Apattern),
+	A2 = get_accesses(Apattern),
 	A = lsrvarsets:union(A1, A2),
 	Ae = {assign, Apattern, Aexpr, T, A},
 	{Ae, Scope2};
@@ -244,7 +262,7 @@ t_arraycons({arraycons, E, Tail}, Scope) ->
 		nil                  -> lsrvarsets:new();
 		{arraycons, _, _, A} -> A
 	end,
-	HeadAccesses = aexpr_get_accesses(Ae),
+	HeadAccesses = get_accesses(Ae),
 	Accesses = lsrvarsets:union(HeadAccesses, TailAccesses),
 	{{arraycons, Ae, ATail, Accesses}, Scope2}.
 
@@ -295,7 +313,7 @@ arraycons_mark_last_accesses({arraycons, Ae, ATail, Accesses}, Name) ->
 -spec mark_last_access(aexpr(), string()) -> aexpr().
 mark_last_access(Ae, Name) ->
 	%% Asserting that this function is used on an Ae where Name is accessed
-	true = lsrvarsets:is_element(Name, aexpr_get_accesses(Ae)),
+	true = lsrvarsets:is_element(Name, get_accesses(Ae)),
 	case Ae of
 		{var, L, Name, T, _} ->
 			{var, L, Name, T, lastaccess};
@@ -309,9 +327,35 @@ mark_last_access(Ae, Name) ->
 			%% Accessed ok. In which of them for the last time?
 			Es2 = arraycons_mark_last_accesses(Es, Name),
 			{array, Len, Es2, As};
+		{concat, E1, E2, Fixed, T, As} ->
+			%% Accessed ok. In left, right or both?
+			case lsrvarsets:is_element(Name, get_accesses(E2)) of
+				true ->
+					%% Accessed in E2. Since E2 is evaluated after E1, any
+					%% last access must be in E2.
+					E2x = mark_last_access(E2, Name),
+					{concat, E1, E2x, Fixed, T, As};
+				false ->
+					%% Not accessed in E2, so any last is in E1.
+					E1x = mark_last_access(E1, Name),
+					{concat, E1x, E2, Fixed, T, As}
+			end;
+		{Binop, E1, E2, T, As} when Binop =:= seq ->
+			%% Accessed ok. In left, right or both?
+			case lsrvarsets:is_element(Name, get_accesses(E2)) of
+				true ->
+					%% Accessed in E2. Since E2 is evaluated after E1, any
+					%% last access must be in E2.
+					E2x = mark_last_access(E2, Name),
+					{Binop, E1, E2x, T, As};
+				false ->
+					%% Not accessed in E2, so any last is in E1.
+					E1x = mark_last_access(E1, Name),
+					{Binop, E1x, E2, T, As}
+			end;
 		{assign, P, E, T, As} ->
 			%% Accessed ok. In expr, pattern or both?
-			case lsrvarsets:is_element(Name, aexpr_get_accesses(P)) of
+			case lsrvarsets:is_element(Name, get_accesses(P)) of
 				true ->
 					%% Accessed in P. Since P is evaluated after E, any
 					%% last access must be in P.
@@ -324,8 +368,8 @@ mark_last_access(Ae, Name) ->
 			end;
 		{'if', E1, E2, E3, T, As} ->
 			%% Accessed ok. In 'then', in 'else' or only in the condition?
-			InThen = lsrvarsets:is_element(Name, aexpr_get_accesses(E2)),
-			InElse = lsrvarsets:is_element(Name, aexpr_get_accesses(E3)),
+			InThen = lsrvarsets:is_element(Name, get_accesses(E2)),
+			InElse = lsrvarsets:is_element(Name, get_accesses(E3)),
 			{E1x, E2x, E3x} = if
 				InThen andalso InElse ->
 					{E1, mark_last_access(E2, Name),
@@ -337,20 +381,7 @@ mark_last_access(Ae, Name) ->
 				true ->
 					{mark_last_access(E1, Name), E2, E3}
 			end,
-			{'if', E1x, E2x, E3x, T, As};
-		{Binop, E1, E2, T, As} when Binop =:= concat; Binop =:= seq ->
-			%% Accessed ok. In left, right or both?
-			case lsrvarsets:is_element(Name, aexpr_get_accesses(E2)) of
-				true ->
-					%% Accessed in E2. Since E2 is evaluated after E1, any
-					%% last access must be in E2.
-					E2x = mark_last_access(E2, Name),
-					{Binop, E1, E2x, T, As};
-				false ->
-					%% Not accessed in E2, so any last is in E1.
-					E1x = mark_last_access(E1, Name),
-					{Binop, E1x, E2, T, As}
-			end
+			{'if', E1x, E2x, E3x, T, As}
 	end.
 
 %------------------------------------------------------------------------------
@@ -359,14 +390,15 @@ mark_last_access(Ae, Name) ->
 
 %% @doc Returns a list of variables accessed or maybe accessed by the
 %% (annotated) expression.
--spec aexpr_get_accesses(aexpr()) -> lsrvarsets:varset().
-aexpr_get_accesses(Ae) ->
+-spec get_accesses(aexpr()) -> lsrvarsets:varset().
+get_accesses(Ae) ->
 	case Ae of
-		{var, _, Name, _, _}   -> lsrvarsets:from_list([Name]);
-		{bind, _, Name, _}     -> lsrvarsets:from_list([Name]);
-		{literal, _}           -> lsrvarsets:new();
-		{array, _, _, As}      -> As;
-		{'if', _, _, _, _, As} -> As;
-		{assign, _, _, _, As}  -> As;
-		{_Binop, _, _, _, As}  -> As
+		{var, _, Name, _, _}     -> lsrvarsets:from_list([Name]);
+		{bind, _, Name, _}       -> lsrvarsets:from_list([Name]);
+		{literal, _}             -> lsrvarsets:new();
+		{array, _, _, As}        -> As;
+		{concat, _, _, _, _, As} -> As;
+		{seq, _, _, _, As}       -> As;
+		{'if', _, _, _, _, As}   -> As;
+		{assign, _, _, _, As}    -> As
 	end.
