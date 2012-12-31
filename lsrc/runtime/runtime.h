@@ -232,7 +232,8 @@ static inline lsr_tagged_t *lsr_create_string(size_t len, const char *chars) {
 	s->type = LSR_STRING;
 	s->refc = 0;
 	s->len  = len;
-	strcpy(s->chars, chars);
+	strncpy(s->chars, chars, len);
+	s->chars[len] = '\0';
 	return (lsr_tagged_t *)s;
 }
 
@@ -284,6 +285,46 @@ lsr_tagged_t *lsr_string_concat(lsr_tagged_t *a,
 static inline
 void lsr_print_string(lsr_tagged_t *s) {
 	printf("%s", lsr_chars(s));
+}
+
+/*
+ * Functions for strings and arrays, overloaded, when the type is unknown
+ */
+
+static inline size_t lsr_length(lsr_tagged_t *ptr) {
+	/* strings only, so far. arrays to come. */
+	lsr_assert_string(ptr);
+	return lsr_strlen(ptr);
+}
+
+static inline lsr_tagged_t *lsr_concat(lsr_tagged_t *a,
+                                       lsr_tagged_t *b) {
+	/* strings only, so far. arrays to come. */
+	lsr_assert_string(a);
+	lsr_assert_string(b);
+	return lsr_string_concat(a, b);
+}
+
+/* a and b must be strings. no type check. */
+static inline bool lsr_equals_substr(lsr_tagged_t *a,
+                                lsr_tagged_t *b, size_t b_offset, size_t len) {
+	return lsr_strlen(a) == len &&
+		strncmp(lsr_chars(a), lsr_chars(b) + b_offset, len) == 0;
+}
+
+/* returns a substring. no type check. */
+static inline lsr_tagged_t * lsr_substr(lsr_tagged_t *ptr, size_t offset, size_t len) {
+	char * chars = lsr_chars(ptr);
+	if (ptr->type == LSR_STRING && ((lsr_string_t *)ptr)->refc == 0) {
+		/* Move the contents to the beginning of the string and shrink it */
+		memmove(chars, chars + offset, len);
+		chars[len] = '\0';
+		return lsr_reuse_string(ptr, len);
+	}
+	else {
+		lsr_decref(ptr);
+		return lsr_create_string(len, chars + offset);
+	}
 }
 
 /*

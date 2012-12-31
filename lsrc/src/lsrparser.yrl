@@ -1,7 +1,7 @@
 Terminals
 boolean string
-'++' '=' ident ';' '(' ')'
-'[' ']' ','
+'~' '=' ident ';' '(' ')'
+'[' ']' '@' ','
 'if' then else.
 
 Nonterminals
@@ -14,71 +14,88 @@ Right 10 ';'.
 Left  15 ','.
 Right 20 else.
 Right 30 '='.
-Left  60 '++'.
+Left  60 '~' '@'.
 
-% Program
-prog -> expr                        : {prog, '$1'}.
+%% Program :: #prog{}
+prog -> expr              : #prog{body='$1'}.
 
-% Expressions
-expr -> prefix                      : '$1'.
+%% Expressions :: #expr{}
+expr -> prefix            : '$1'.
 
-% Array
-% Store total length, and a sequence of arraycons, nil-terminated
-exprs -> expr                       : {{arraycons, '$1', nil}, 1}.
-exprs -> expr ',' exprs             : {TailCons, TailLen} = '$3',
-                                      {{arraycons, '$1', TailCons}, 1+TailLen}.
-expr -> '[' exprs ']'               : {Cons, Len} = '$2',
-                                      {array, Len, Cons}.
-expr -> '[' ']'                     : {array, 0, nil}.
+%% Array body
+%% exprs :: {exprs(), Length::integer()}
+exprs -> expr             : {#cons{head = '$1', tail = nil}, 1}.
+exprs -> expr ',' exprs   : {TailCons, TailLen} = '$3',
+                            {#cons{head = '$1', tail = TailCons}, 1 + TailLen}.
 
-expr -> expr '++' expr              : {concat, '$1', '$3'}.
+%% Array expr :: #expr{}
+expr -> '[' exprs ']'     : {'[', Line} = '$1',
+                            {Cons, Len} = '$2',
+                            mkexpr(#array{length = Len, elems = Cons}, Line).
+expr -> '[' ']'           : {'[', Line} = '$1',
+                            mkexpr(#array{length = 0, elems = nil}, Line).
+
+expr -> expr '~' expr     : {'~', Line} = '$2',
+                            mkexpr(#strcat{left = '$1', right = '$3'}, Line).
+expr -> expr '@' expr     : {'@', Line} = '$2',
+                            mkexpr(#arrcat{left = '$1', right = '$3'}, Line).
 
 % Seq as a binary op
-expr -> seqexpr ';' expr            : {seq, '$1', '$3'}.
+expr -> seqexpr ';' expr  : mkbinop(seq, '$1', '$3', '$2').
 
-% Assignment, like let-in, always followed by an expr
-assign -> expr '=' expr             : {assign, '$1', '$3'}.
-seqexpr -> assign                   : '$1'.
-seqexpr -> expr                     : '$1'.
+% Assignment (like let-in, always followed by an expr)
+assign -> expr '=' expr   : {'=', Line} = '$2',
+                            mkexpr(#assign{pat = '$1', expr = '$3'}, Line).
+seqexpr -> assign         : '$1'.
+seqexpr -> expr           : '$1'.
 
-expr -> if expr then expr else expr : {'if', '$2', '$4', '$6'}.
+expr -> if expr
+        then expr
+        else expr         : {'if', Line} = '$1',
+                            If = #'if'{'cond' = '$2',
+                                       'then' = '$4',
+                                       'else' = '$6'},
+                            mkexpr(If, Line).
 
-% Prefix and postfix stuff (juxtaposition)
-prefix -> postfix                   : '$1'.
-prefix -> '[' exprs ']' prefix      : {concat, '$1', '$3'}.
-%prefix -> literal prefix            : {concat, '$1', '$2'}.
+%% Prefix and postfix stuff (juxtaposition)
 
-postfix -> primary_expr             : '$1'.
-postfix -> postfix '[' exprs ']'    : {concat, '$1', '$3'}.
-%postfix -> postfix literal          : {concat, '$1', '$2'}.
+%% prefix :: #expr{}
+prefix -> postfix         : '$1'.
+%prefix -> '[' exprs ']' prefix.
 
-primary_expr -> var                 : '$1'.
-primary_expr -> literal             : '$1'.
-primary_expr -> '(' expr ')'        : '$2'.
+%% postfix :: #expr{}
+postfix -> primary_expr   : '$1'.
+%postfix -> postfix '[' exprs ']'.
 
-var -> ident                        : {ident, Line, Name} = '$1',
-                                      {var, Line, Name}.
+%% primary_expr :: #expr{}
+primary_expr -> var          : '$1'.
+primary_expr -> literal      : '$1'.
+primary_expr -> '(' expr ')' : '$2'.
 
-literal -> boolean                  : {literal, '$1'}.
-literal -> string                   : {literal, '$1'}.
+%% Variables and literals :: #expr{}
+var -> ident              : {ident, Line, Name} = '$1',
+                            mkexpr(#var{name = Name}, Line).
+
+literal -> boolean        : mkliteral('$1').
+literal -> string         : mkliteral('$1').
 
 
 Erlang code.
 
-%% Binary operations for expressions
--type binop() :: concat | seq.
+-include("types.hrl").
 
--type literal() :: {string, integer(), string()}
-                 | {boolean, integer(), boolean()}.
+%% Expr creation helpers
 
--type arraycons() :: {arraycons, expr(), arraycons()} | nil.
+-spec mkexpr(exprbody(), integer()) -> #expr{}.
+mkexpr(Body, Line) ->
+	#expr{body = Body, line = Line}.
 
--type expr() :: {var, integer(), string()}
-              | {literal, literal()}
-              | {binop(), expr(), expr()}
-              | {assign, string(), expr()}
-              | {array, Length::integer(), Body::arraycons()}.
+-spec mkbinop(atom(), #expr{}, #expr{}, {atom(), integer()}) -> #expr{}.
+mkbinop(Op, Left, Right, OpToken) ->
+	{_, Line} = OpToken,
+	mkexpr(#binop{op = Op, left = Left, right = Right}, Line).
 
--type prog() :: {prog, expr()}.
-
--export_type([literal/0, binop/0, expr/0, prog/0]).
+-spec mkliteral({typename(), integer(), any()}) -> #expr{}.
+mkliteral(Token) ->
+	{Type, Line, Data} = Token,
+	mkexpr(#literal{type = Type, data = Data}, Line).

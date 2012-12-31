@@ -2,13 +2,22 @@
 
 -export([compile/1, compile/2]).
 
--record(state, {nexttmp=1, indent=0}).
+-include("types.hrl").
+
+-record(state, {nexttmp=1, nextlabel=1, indent=0}).
+
+%% @doc A value that is subject to pattern matching
+-record(subject, {value :: string(),       %% a C expression
+                  type :: typename(),      %% infered type
+                  offset = none,           %% offset, when used
+                  length = none,           %% used together with offset
+                  faillabel :: string()}). %% goto on mismatch
 
 compile(Src) ->
 	compile(Src, false).
 
-%% @doc Compiles Lesser souce code to C code.  Prints an error message on
-%% failure.  TODO: Should return {ok, Code} or {error, Message}...
+%% @doc Compiles Lesser souce code to C code.
+%% Returns {ok, Code} or {error, Message}.
 compile(Bin, Verbose) when is_binary(Bin) ->
 	compile(binary_to_list(Bin), Verbose);
 compile(String, Verbose) when is_list(String) ->
@@ -25,7 +34,7 @@ compile(String, Verbose) when is_list(String) ->
 			true  -> io:format("Annotated tree:~n~p~n", [Annotated]);
 			false -> ok
 		end,
-		c_prog(Annotated)
+		{ok, c_prog(Annotated, Verbose)}
 	catch
 		error:{badmatch, {error, Error}} ->
 			Message1 = case Error of
@@ -36,15 +45,15 @@ compile(String, Verbose) when is_list(String) ->
 				Other ->
 					["Other: ", io_lib:format("~p", [Other])]
 			end,
-			io:format("~s~n", [Message1])
+			{error, Message1}
 	end.
 
-c_prog({prog, E, Type, Vars, _OuterVars=[]}) ->
+c_prog(#prog{body=E, type=Type, locals=Vars, accessed=_OuterVars=[]},
+       MemDebug) ->
 	State = #state{},
 	State1 = indent_more(State),
 	#state{indent = Indent} = State1,
 	{Decl, Code, RetVar, _State2} = c(E, State1),
-	MemDebug = true,
 	Output =
 	[case MemDebug of
 		true -> "#define LSR_MONITOR_ALLOC\n";
@@ -81,6 +90,7 @@ c_prog({prog, E, Type, Vars, _OuterVars=[]}) ->
 	 "}\n"],
 	list_to_binary(Output).
 
+-spec c_vardecls(scope(), integer()) -> iolist().
 c_vardecls(Vars, Indent) ->
 	c_vardecls(Vars, Indent, []).
 c_vardecls([], _, Acc) ->
@@ -90,52 +100,175 @@ c_vardecls([{Name, Type} | Vars], Indent, Acc) ->
 
 %% @doc Check a value (c variable) against a pattern. The SuccessBool is a
 %% c bool expression indicating success.
--spec c_match(Pattern::lsrtyper:aexpr(), Value::string(),
-              ValueType::lsrtyper:typename(), #state{}) ->
-      {MatchDecl::iolist(), MatchCode::iolist(), SuccessBool::iolist(),
+-spec c_match(Pattern::#expr{}, #subject{}, #state{}) ->
+      {MatchDecl::iolist(), MatchCode::iolist(),
        BindDecl::iolist(), BindCode::iolist(), #state{}}.
-c_match({bind, _, VarName, VarType}, Value, ValueType,
+c_match(#expr{body=#var{action=bind, name=VarName}, type=VarType},
+        #subject{value=Value, offset=none, length=none},
         State = #state{indent=Indent}) ->
-	% Assert subtype
-	true = lsrtyper:is_subtype_of(ValueType, VarType),
 	% Assignment code, increment ref-counter
 	BindCode = [indent(Indent), VarName, " = ", Value, ";",
 	            case VarType of
-					boolean -> [];
-					_       -> [" lsr_incref(", VarName, ");"]
-				end,
+	                boolean -> [];
+	                _       -> [" lsr_incref(", VarName, ");"]
+	            end,
 	            "\n"],
-	{[], [], "true",
-	 [], BindCode, State};
+	{[], [],	 [], BindCode, State};
+c_match(#expr{body=#var{action=bind, name=VarName}},
+        #subject{value=Value, type=string, offset=Offset, length=Length},
+        State = #state{indent=Indent})
+		when Offset =/= none, Length =/= none ->
+	% Assignment code, increment ref-counter
+	BindCode = [indent(Indent), VarName, " = "
+	            "lsr_substr(", Value, ", ", Offset, ", ", Length, ");",
+	            " lsr_incref(", VarName, ");\n"],
+	{[], [],	 [], BindCode, State};
 
-c_match(Var = {var, _, _, VarType, _}, Value, ValueType, State) ->
-	% Assert subtype (should be infered. TODO: move to typechecker)
-	true = lsrtyper:is_subtype_of(ValueType, VarType),
-	% Compile the var access
-	{Decl, Code, Name, State2} = c(Var, State),
-	SuccessBool = ["lsr_equals(", Name, ", ", Value, ")"],
-	{Decl, Code, SuccessBool, [], [], State2};
 
-c_match(Lit = {literal, _}, Value, ValueType, State) ->
-	% Assert supertype (should be infered. TODO: move to typechecker)
-	true = lsrtyper:is_subtype_of(lsrtyper:get_type(Lit), ValueType),
-	% Compile the literal
-	{Decl, Code, Name, State2} = c(Lit, State),
-	SuccessBool = ["lsr_equals(", Name, ", ", Value, ")"],
-	{Decl, Code, SuccessBool, [], [], State2}.
+% Expression as pattern: compare equal to the pattern subject
+c_match(Expr = #expr{body=Body}, Subject = #subject{}, State)
+		when is_record(Body, var);
+		     is_record(Body, literal) ->
+	% Compile the expression
+	{Decl, Code, ExprResult, State2} = c(Expr, State),
+	EqCode = c_equality_check(ExprResult, Subject, State2),
+	{Decl, [Code, EqCode], [], [], State2};
 
-c({'if', E1, E2, E3, T, _As}, State = #state{indent=Indent}) ->
+%% String concatenation as pattern. Assert string, find subject's length and
+%% skip to helper.
+c_match(Expr = #expr{body = #strcat{}, type = string},
+        Subject = #subject{value=Value, type=ValueType, faillabel=FailLabel,
+                           offset=none, length=none},
+        State = #state{indent=Indent}) ->
+	Offset = "0UL",
+	TypeCheck = case ValueType of
+		string -> [];
+		_      -> [indent(Indent),
+		           "if (!lsr_is_string(", Value, ")) goto ", FailLabel, ";\n"]
+	end,
+	{LenDecl, LenCode, LenVar, State1} = c_length(Value, string, State),
+	Subject1 = Subject#subject{offset=Offset, length=LenVar, type=string},
+	{Decl, Code, BindDecl, BindCode, State2} = c_match(Expr, Subject1, State1),
+	{[LenDecl, Decl], [TypeCheck, LenCode, Code], BindDecl, BindCode, State2};
+
+%% @doc Match a substring of Value. The type (string) is already checked.
+%% Len and Offset are C expressions (such as variables)
+c_match(#expr{body = #strcat{left = L, right = R}},
+        Subject = #subject{faillabel=FailLabel,
+                           offset=Offset, length=Len},
+        State = #state{indent = Indent})
+		when Offset =/= none, Len =/= none ->
+
+	%% Decide sides
+	{CheckExpr, RestPat, CheckSide} = case lsrtyper:is_fixed(L) of
+		true  -> {L, R, left};
+		false -> {R, L, right}
+	end,
+
+	%% Compile CheckExpr
+	{Decl1, Code1, CheckVal, State1} = c(CheckExpr, State),
+	{Decl2, Code2, CheckValLen, State2} = c_length(CheckVal, string, State1),
+
+	%% Split Subject into CheckSubject and RestSubject
+	{Decl3, Code3, CheckSubject, RestSubject, State3} =
+		split_subject(Subject, CheckSide, CheckValLen, State2),
+
+	%% A simple length assertion, since we have both lengths here
+	#subject{length=CheckSubjLen} = CheckSubject,
+	Code4 = [indent(Indent), "if (", CheckValLen, " != ", CheckSubjLen, ") ",
+	         "goto ", FailLabel, ";\n"],
+
+	%% Check
+	Code5 = c_equality_check(CheckVal, CheckSubject, State3),
+
+	%% Match rest
+	{Decl4, Code6, BindDecl, BindCode, State4} =
+		c_match(RestPat, RestSubject, State3),
+	{[Decl1, Decl2, Decl3, Decl4],
+	 [Code1, Code2, Code3, Code4, Code5, Code6],
+	 BindDecl, BindCode, State4}.
+
+%% Split a pattern subject into a check part and a match part.
+-spec split_subject(#subject{}, left | right, string(), #state{}) ->
+	{Decl::iolist(), Code::iolist(), #subject{}, #subject{}, #state{}}.
+split_subject(Subject = #subject{offset=Offset, length=Len},
+              left, CheckLen,
+              State = #state{indent=Indent}) ->
+	{RestLen, State1} = new_tmpvar(State),
+	Decl1 = [indent(Indent), "size_t ", RestLen, ";\n"],
+	Code1 = [indent(Indent), RestLen, " = ", Len, " - ", CheckLen, ";\n"],
+	{RestOffset, State2} = new_tmpvar(State1),
+	Decl2 = [indent(Indent), "size_t ", RestOffset, ";\n"],
+	Code2 = [indent(Indent), RestOffset, " = ", Offset, " + ", CheckLen, ";\n"],
+	{[Decl1, Decl2],
+	 [Code1, Code2],
+	 Subject#subject{length = CheckLen},
+	 Subject#subject{offset = RestOffset, length = RestLen},
+	 State2};
+split_subject(Subject = #subject{offset=Offset, length=Len},
+              right, CheckLen,
+              State = #state{indent=Indent}) ->
+	{RestLen, State1} = new_tmpvar(State),
+	Decl1 = [indent(Indent), "size_t ", RestLen, ";\n"],
+	Code1 = [indent(Indent), RestLen, " = ", Len, " - ", CheckLen, ";\n"],
+	{CheckOffset, State2} = new_tmpvar(State1),
+	Decl2 = [indent(Indent), "size_t ", CheckOffset, ";\n"],
+	Code2 = [indent(Indent), CheckOffset, " = ", Offset, " + ", RestLen, ";\n"],
+	{[Decl1, Decl2],
+	 [Code1, Code2],
+	 Subject#subject{offset = CheckOffset, length = CheckLen},
+	 Subject#subject{length = RestLen},
+	 State2}.
+
+%% @doc Create C code for an equality check with goto faillabel on mismatch
+-spec c_equality_check(CheckVar::string(), #subject{}, #state{}) -> iolist().
+c_equality_check(CheckVar,
+                 #subject{value=Value, offset=none, length=none,
+                          faillabel=FailLabel},
+                 #state{indent=Indent}) ->
+	[indent(Indent), "if (!lsr_equals(", CheckVar, ", ", Value, ")) ",
+	 "goto ", FailLabel, ";\n"];
+c_equality_check(CheckVar,
+                 #subject{value=Value, type=Type, offset=Offset, length=Length,
+                          faillabel=FailLabel},
+                 #state{indent=Indent}) ->
+	EqFun = case Type of
+		string -> "lsr_equals_substr";
+		array  -> "lsr_equals_slice" %% TODO implement this in runtime
+	end,
+	[indent(Indent), "if (!", EqFun, "(", CheckVar, ", ", Value, ", ",
+	 Offset, ", ", Length, ")) ", "goto ", FailLabel, ";\n"].
+
+
+%% @doc C code for the length of a value (string or array)
+-spec c_length(Value::iolist(), typename(), #state{}) ->
+	{Decl::iolist(), Code::iolist(), RetVar::iolist(), State::#state{}}.
+c_length(Value, Type, State = #state{indent = Indent}) ->
+	LenFunc = case Type of
+		string -> "lsr_strlen";
+		array -> fixme;
+		any -> "lsr_length"
+	end,
+	{Var, State1} = new_tmpvar(State),
+	Decl = [indent(Indent), "size_t ", Var, ";\n"],
+	Code = [indent(Indent), Var, " = ", LenFunc, "(", Value, ");\n"],
+	{Decl, Code, Var, State1}.
+
+-spec c(#expr{}, #state{}) -> {iolist(), iolist(), iolist(), #state{}}.
+c(#expr{body = #'if'{'cond' = E1 = #expr{type = T1},
+                     'then' = E2 = #expr{accessed = A2},
+                     'else' = E3 = #expr{accessed = A3}},
+        type = T},
+  State = #state{indent=Indent}) ->
 	% TODO Free the input values (i.e. the condition).
-	% TODO Free all vars in the dead branch which would be last accessed there.
-	A2 = lsrtyper:get_accesses(E2),
-	A3 = lsrtyper:get_accesses(E3),
+	% Free all vars in the dead branch which would be last accessed there.
 	AccessedInElseOnly = lsrvarsets:subtract(A3, A2),
 	AccessedInThenOnly = lsrvarsets:subtract(A2, A3),
 	Discard2 = discard_vars(AccessedInElseOnly, Indent + 1),
 	Discard3 = discard_vars(AccessedInThenOnly, Indent + 1),
 	% TODO Push new local scope to state.
 	{Decl1, Code1, RetVar1, State1} = c(E1, State),
-	BoolCheck = case lsrtyper:get_type(E1) of
+	BoolCheck = case T1 of
 		boolean ->
 			% We know it's boolean.  No runtime check.
 			[];
@@ -160,16 +293,17 @@ c({'if', E1, E2, E3, T, _As}, State = #state{indent=Indent}) ->
 	{Decl, Code, RetVar, State5};
 
 % Sequence: Discard the first value and continue. Keep only the last value. 
-c({seq, E1, E2, _Type, _Accesses}, State = #state{indent=Indent}) ->
+c(#expr{body = #binop{op = seq, left = E1, right = E2}},
+  State = #state{indent=Indent}) ->
 	{Decl1, Code1, DeadVar, State2} = c(E1, State),
 	{Decl2, Code2, RetVar, State3} = c(E2, State2),
 	FreeCode = case E1 of
-		{assign, {bind, _, _, _}, _, _, _} ->
-			% A variable has just ben assign this value.  It can't be the last
-			% access.
+		#expr{body = #assign{pat = #expr{body = #var{action = bind}}}} ->
+			%% Small optimatization.  A variable has just ben assigned this
+			%% (temporary) value.  It can't be the last access.
 			[];
 		_ ->
-			Accesses = lsrtyper:get_accesses(E2),
+			Accesses = lsrtyper:get_accessed(E2),
 			case lsrvarsets:is_element(DeadVar, Accesses) of
 				false -> [indent(Indent), "lsr_free_unused(", DeadVar, ");\n"];
 				true  -> [] % DeadVar will be used later, so refc can't be zero here.
@@ -178,15 +312,18 @@ c({seq, E1, E2, _Type, _Accesses}, State = #state{indent=Indent}) ->
 	{[Decl1, Decl2], [Code1, FreeCode, Code2], RetVar, State3};
 
 % Concatenation
-c({concat, Left, Right, true, _Type, _Accesses}, State = #state{indent=Indent}) ->
+c(#expr{body = #strcat{left  = Left  = #expr{type = TL},
+                       right = Right = #expr{type = TR},
+                       fixed = true}},
+  State = #state{indent = Indent}) ->
 	{LeftDecl, LeftCode, LeftVar, State2} = c(Left, State),
 	%% If it's not infered to be a string, add a runtime assertion
-	AssertLeft = case lsrtyper:get_type(Left) of
+	AssertLeft = case TL of
 		string -> [];
 		_      -> [indent(Indent), "lsr_assert_string(", LeftVar, ");\n"]
 	end,	
 	{RightDecl, RightCode, RightVar, State3} = c(Right, State2),
-	AssertRight = case lsrtyper:get_type(Right) of
+	AssertRight = case TR of
 		string -> [];
 		_      -> [indent(Indent), "lsr_assert_string(", RightVar, ");\n"]
 	end,
@@ -198,24 +335,32 @@ c({concat, Left, Right, true, _Type, _Accesses}, State = #state{indent=Indent}) 
 	 State4};
 
 % Assignment (match) Pattern = Expression, binds any free vars in pattern
-c({assign, Pattern, Expr, ExprType, _Accesses}, 
-  State = #state{indent=Indent}) ->
-	{ExprDecl, ExprCode, ExprVar, State2} = c(Expr, State),
-	{MatchDecl, MatchCode, SuccessVar,
-	 BindDecl, BindCode, State3} = c_match(Pattern, ExprVar, ExprType, State2),
+c(#expr{body = #assign{pat = Pattern, expr = Expr}, type = ExprType}, 
+  State = #state{indent = Indent}) ->
+	{ExprDecl, ExprCode, ExprVar, State1} = c(Expr, State),
+	{LabelPrefix, State2} = new_label(State1),
+	FailLabel = LabelPrefix ++ "_mismatch",
+	SuccessLabel = LabelPrefix ++ "_match",
+	Subject = #subject{value = ExprVar,
+	                   type = ExprType,
+	                   faillabel = FailLabel},
+	_ = Subject, %% FIXME pass subject to c_match
+	{MatchDecl, MatchCode,
+	 BindDecl, BindCode, State3} = c_match(Pattern, Subject, State2),
 	% Code to assert successed match and raise an error otherwise
-	SuccessCode = case SuccessVar of
-		"true" -> [];
-		_      -> [indent(Indent),
-	               "if (!", SuccessVar, ") lsr_error(\"Pattern mismatch (", ExprVar, ")\");\n"]
-	end,
+	SuccessCode = [indent(Indent), "goto ", SuccessLabel, ";\n",
+	               indent(Indent), FailLabel, ":\n",
+	               indent(Indent),
+	               "lsr_error(\"Pattern mismatch (", ExprVar, ")\");\n",
+	               indent(Indent), SuccessLabel, ":\n"],
 	{[ExprDecl, MatchDecl, BindDecl],
 	 [ExprCode, MatchCode, SuccessCode, BindCode],
-     ExprVar,
-     State3};
+	 ExprVar,
+	 State3};
 
 % Variable access
-c({var, _, Name, boolean, AccessType}, State = #state{indent=Indent}) ->
+c(#expr{body = #var{name = Name, action = AccessType}, type = boolean},
+  State = #state{indent = Indent}) ->
 	% reference counted
 	Code = case AccessType of
 		lastaccess -> [indent(Indent),
@@ -223,7 +368,8 @@ c({var, _, Name, boolean, AccessType}, State = #state{indent=Indent}) ->
 		access     -> []
 	end,
 	{[], Code, Name, State};
-c({var, _, Name, Type, AccessType}, State = #state{indent=Indent})
+c(#expr{body = #var{name = Name, action = AccessType}, type = Type},
+  State = #state{indent = Indent})
 			when Type =:= string; Type =:= any ->
 	Code = case AccessType of
 		lastaccess -> [indent(Indent), "lsr_decref(", Name, ");",
@@ -233,7 +379,8 @@ c({var, _, Name, Type, AccessType}, State = #state{indent=Indent})
 	{[], Code, Name, State};
 
 % Literals, either a plain C value or an initialized tempvar
-c({literal, {boolean, _, Content}}, State = #state{indent=Indent}) ->
+c(#expr{body = #literal{type = boolean, data = Content}},
+  State = #state{indent = Indent}) ->
 	% create boxed type and a new tmpvar
 	{Name, State2} = new_tmpvar(State),
 	Decl = [indent(Indent), c_type(boolean), " ", Name,
@@ -243,7 +390,8 @@ c({literal, {boolean, _, Content}}, State = #state{indent=Indent}) ->
 	% We may want to use unboxed values, represented directly as a c bool
 	%Ret = c_boolean_literal(Content),
 	%{[], [], Ret, State};
-c({literal, {string, _, Content}}, State = #state{indent=Indent}) ->
+c(#expr{body = #literal{type = string, data = Content}},
+  State = #state{indent=Indent}) ->
 	% create boxed type and a new tmpvar
 	{Name, State2} = new_tmpvar(State),
 	Decl = [indent(Indent),
@@ -251,9 +399,16 @@ c({literal, {string, _, Content}}, State = #state{indent=Indent}) ->
 	        c_string_literal(Content), ";\n"],
 	{Decl, [], Name, State2}.
 
+-spec discard_vars(string(), integer()) -> iolist().
 discard_vars(Names, Indent) ->
 	lists:map(fun (Name) -> [indent(Indent), "lsr_discard_ref(", Name, "); /* never used after this point */\n"] end,
 	          Names).
+
+% Returns an unused label
+-spec new_label(#state{}) -> {string(), #state{}}.
+new_label(State = #state{nextlabel = NextLabel}) ->
+	{"l" ++ integer_to_list(NextLabel),
+	 State#state{nextlabel = NextLabel + 1}}.
 
 % Returns an unused temporary variable name (for intermediate values)
 -spec new_tmpvar(#state{}) -> {string(), #state{}}.
@@ -271,16 +426,19 @@ c_string_literal(Content) ->
 	["lsr_string_literal(", Content, ")"].
 
 % declare and initialize
--spec decl(string(), lsrtyper:typename(), integer()) -> iolist().
+-spec decl(string(), typename(), integer()) -> iolist().
 decl(Name, Type, Indent) ->
 	[indent(Indent), c_type(Type), " ", Name, ";",
 	 " /* ", atom_to_list(Type), " */\n"].
 
+-spec indent(integer()) -> iolist().
 indent(N) when N >= 0 ->
 	string:chars($\s, N * 2).
 
+-spec indent_more(#state{}) -> #state{}.
 indent_more(State = #state{indent = N}) ->
 	State#state{indent = N + 1}.
 
+-spec indent_less(#state{}) -> #state{}.
 indent_less(State = #state{indent = N}) ->
 	State#state{indent = N - 1}.
