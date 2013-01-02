@@ -17,7 +17,7 @@ compile(SrcFile, DstFile, Debug) ->
 	case lsrc:compile(Src, Debug) of
 		{ok, Dst} ->
 			file:write_file([DstFile, ".c"], Dst),
-			Output = os:cmd(["gcc -Wall -Wno-unused-label -pedantic ",
+			Output = os:cmd(["gcc -Wall -pedantic ", % -Wno-unused-label
 			                 DstFile, ".c -o ", DstFile]),
 			io:format("~s", [Output]);
 		{error, Msg} ->

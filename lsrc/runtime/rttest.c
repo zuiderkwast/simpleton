@@ -21,9 +21,9 @@ int main() {
  * Equality checks
  */
 void test3(void) {
-	lsr_tagged_t *s1 = lsr_create_string(3, "foo"),
-	             *s2 = lsr_string_literal("foo"),
-	             *b  = lsr_bool_to_ptr(true);
+	lsr_t *s1 = lsr_create_string(3, "foo"),
+          *s2 = lsr_string_literal("foo"),
+          *b  = lsr_bool_to_ptr(true);
 	printf("=== Test 3: equality checks ===\n");
 	test(!lsr_equals(b, s1), "Boolean != string");
 	test(lsr_equals(s1, s2), "Allocated string 'foo' == Literal 'foo'");
@@ -33,8 +33,8 @@ void test3(void) {
  * Booleans, masked in a pointer
  */
 void test2(void) {
-	lsr_tagged_t *t = lsr_bool_to_ptr(true),
-	             *f = lsr_bool_to_ptr(false);
+	lsr_t *t = lsr_bool_to_ptr(true),
+	      *f = lsr_bool_to_ptr(false);
 	printf("=== Test 2: true and false ===\n");
 	lsr_ensure_boolean(t);
 	lsr_ensure_boolean(f);
@@ -48,13 +48,13 @@ void test2(void) {
  * Pseudo source code: "hej" + "du" + "du" + "du".
  */
 void test1(void) {
-	lsr_tagged_t *a, *b, *c, *d, *e;
+	lsr_t *a, *b, *c, *d, *e;
 	size_t mem;
 	printf("=== Test 1: ref-counted strings and string literals ===\n");
 
 	if (verbose)
-		printf("Size of struct lsr_string_nodata: %lu\n",
-		       sizeof(struct lsr_string_nodata));
+		printf("Size of lsr_string_t: %lu\n",
+		       sizeof(lsr_string_t));
 
 	test(lsr_alloc_bytes_cnt == 0, "Zero allocation at start");
 

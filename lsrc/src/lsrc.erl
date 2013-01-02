@@ -175,8 +175,13 @@ c_match(#expr{body = #strcat{left = L, right = R}},
 
 	%% A simple length assertion, since we have both lengths here
 	#subject{length=CheckSubjLen} = CheckSubject,
-	Code4 = [indent(Indent), "if (", CheckValLen, " != ", CheckSubjLen, ") ",
-	         "goto ", FailLabel, ";\n"],
+	Code4 = case CheckValLen =:= CheckSubjLen of
+		true ->
+			[];
+		false ->
+			[indent(Indent), "if (", CheckValLen, " != ", CheckSubjLen, ") ",
+			 "goto ", FailLabel, ";\n"]
+	end,
 
 	%% Check
 	Code5 = c_equality_check(CheckVal, CheckSubject, State3),
@@ -194,10 +199,10 @@ c_match(#expr{body = #strcat{left = L, right = R}},
 split_subject(Subject = #subject{offset=Offset, length=Len},
               left, CheckLen,
               State = #state{indent=Indent}) ->
-	{RestLen, State1} = new_tmpvar(State),
+	{RestLen, State1} = new_tmpvar(State, "_rest_length"),
 	Decl1 = [indent(Indent), "size_t ", RestLen, ";\n"],
 	Code1 = [indent(Indent), RestLen, " = ", Len, " - ", CheckLen, ";\n"],
-	{RestOffset, State2} = new_tmpvar(State1),
+	{RestOffset, State2} = new_tmpvar(State1, "_rest_offset"),
 	Decl2 = [indent(Indent), "size_t ", RestOffset, ";\n"],
 	Code2 = [indent(Indent), RestOffset, " = ", Offset, " + ", CheckLen, ";\n"],
 	{[Decl1, Decl2],
@@ -208,10 +213,10 @@ split_subject(Subject = #subject{offset=Offset, length=Len},
 split_subject(Subject = #subject{offset=Offset, length=Len},
               right, CheckLen,
               State = #state{indent=Indent}) ->
-	{RestLen, State1} = new_tmpvar(State),
+	{RestLen, State1} = new_tmpvar(State, "_rest_length"),
 	Decl1 = [indent(Indent), "size_t ", RestLen, ";\n"],
 	Code1 = [indent(Indent), RestLen, " = ", Len, " - ", CheckLen, ";\n"],
-	{CheckOffset, State2} = new_tmpvar(State1),
+	{CheckOffset, State2} = new_tmpvar(State1, "_check_offset"),
 	Decl2 = [indent(Indent), "size_t ", CheckOffset, ";\n"],
 	Code2 = [indent(Indent), CheckOffset, " = ", Offset, " + ", RestLen, ";\n"],
 	{[Decl1, Decl2],
@@ -246,10 +251,9 @@ c_equality_check(CheckVar,
 c_length(Value, Type, State = #state{indent = Indent}) ->
 	LenFunc = case Type of
 		string -> "lsr_strlen";
-		array -> fixme;
-		any -> "lsr_length"
+		array -> fixme
 	end,
-	{Var, State1} = new_tmpvar(State),
+	{Var, State1} = new_tmpvar(State, "_length"),
 	Decl = [indent(Indent), "size_t ", Var, ";\n"],
 	Code = [indent(Indent), Var, " = ", LenFunc, "(", Value, ");\n"],
 	{Decl, Code, Var, State1}.
@@ -276,7 +280,7 @@ c(#expr{body = #'if'{'cond' = E1 = #expr{type = T1},
 			% Code to ensure it's a boolean.
 			[indent(Indent), "lsr_ensure_boolean(", RetVar1, ");\n"]
 	end,
-	{RetVar, State2} = new_tmpvar(State1),
+	{RetVar, State2} = new_tmpvar(State1, "_if"),
 	{Decl2, Code2, RetVar2, State3} = c(E2, indent_more(State2)),
 	{Decl3, Code3, RetVar3, State4} = c(E3, State3),
 	State5 = indent_less(State4),
@@ -327,7 +331,7 @@ c(#expr{body = #strcat{left  = Left  = #expr{type = TL},
 		string -> [];
 		_      -> [indent(Indent), "lsr_assert_string(", RightVar, ");\n"]
 	end,
-	{RetVar, State4} = new_tmpvar(State3),
+	{RetVar, State4} = new_tmpvar(State3, "_strcat"),
 	ConcatCode = [indent(Indent), RetVar, " = lsr_string_concat(", LeftVar, ", ", RightVar, ");\n"],
 	{[LeftDecl, RightDecl, decl(RetVar, string, Indent)],
 	 [LeftCode, AssertLeft, RightCode, AssertRight, ConcatCode],
@@ -348,11 +352,16 @@ c(#expr{body = #assign{pat = Pattern, expr = Expr}, type = ExprType},
 	{MatchDecl, MatchCode,
 	 BindDecl, BindCode, State3} = c_match(Pattern, Subject, State2),
 	% Code to assert successed match and raise an error otherwise
-	SuccessCode = [indent(Indent), "goto ", SuccessLabel, ";\n",
-	               indent(Indent), FailLabel, ":\n",
-	               indent(Indent),
-	               "lsr_error(\"Pattern mismatch (", ExprVar, ")\");\n",
-	               indent(Indent), SuccessLabel, ":\n"],
+	SuccessCode = case MatchCode of
+		[] ->
+			[];
+		_ ->
+			[indent(Indent), "goto ", SuccessLabel, ";\n",
+			 indent(Indent), FailLabel, ":\n",
+			 indent(Indent),
+			 "lsr_error(\"Pattern mismatch (", ExprVar, ")\");\n",
+			 indent(Indent), SuccessLabel, ":\n"]
+	end,
 	{[ExprDecl, MatchDecl, BindDecl],
 	 [ExprCode, MatchCode, SuccessCode, BindCode],
 	 ExprVar,
@@ -382,7 +391,7 @@ c(#expr{body = #var{name = Name, action = AccessType}, type = Type},
 c(#expr{body = #literal{type = boolean, data = Content}},
   State = #state{indent = Indent}) ->
 	% create boxed type and a new tmpvar
-	{Name, State2} = new_tmpvar(State),
+	{Name, State2} = new_tmpvar(State, "_bool_lit"),
 	Decl = [indent(Indent), c_type(boolean), " ", Name,
 	        " = ", c_boolean_literal(Content), ";\n"],
 	{Decl, [], Name, State2};
@@ -393,7 +402,7 @@ c(#expr{body = #literal{type = boolean, data = Content}},
 c(#expr{body = #literal{type = string, data = Content}},
   State = #state{indent=Indent}) ->
 	% create boxed type and a new tmpvar
-	{Name, State2} = new_tmpvar(State),
+	{Name, State2} = new_tmpvar(State, "_str_lit"),
 	Decl = [indent(Indent),
 	        c_type(string), " ", Name, " = ",
 	        c_string_literal(Content), ";\n"],
@@ -406,18 +415,27 @@ discard_vars(Names, Indent) ->
 
 % Returns an unused label
 -spec new_label(#state{}) -> {string(), #state{}}.
-new_label(State = #state{nextlabel = NextLabel}) ->
-	{"l" ++ integer_to_list(NextLabel),
+new_label(State = #state{}) ->
+	new_label(State, "").
+
+-spec new_label(#state{}, Suffix::string()) -> {string(), #state{}}.
+new_label(State = #state{nextlabel = NextLabel}, Suffix) ->
+	{"l" ++ integer_to_list(NextLabel) ++ Suffix,
 	 State#state{nextlabel = NextLabel + 1}}.
 
 % Returns an unused temporary variable name (for intermediate values)
 -spec new_tmpvar(#state{}) -> {string(), #state{}}.
-new_tmpvar(State = #state{nexttmp=NextTmp}) ->
-	{"tmp" ++ integer_to_list(NextTmp), State#state{nexttmp = NextTmp + 1}}.
+new_tmpvar(State = #state{}) ->
+	new_tmpvar(State, "").
+
+-spec new_tmpvar(#state{}, Suffix::string()) -> {string(), #state{}}.
+new_tmpvar(State = #state{nexttmp=NextTmp}, Suffix) ->
+	{"tmp" ++ integer_to_list(NextTmp) ++ Suffix,
+	 State#state{nexttmp = NextTmp + 1}}.
 
 c_type(_Type) ->
-	%case Type of string -> "lsr_tagged_t *"; boolean -> "bool" end.
-	"lsr_tagged_t *".
+	%case Type of string -> "lsr_t *"; boolean -> "bool" end.
+	"lsr_t *".
 
 c_boolean_literal(Content) ->
 	C_bool = case Content of true -> "true"; false -> "false" end,

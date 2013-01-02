@@ -42,6 +42,7 @@ Other planned features are borrowed from various languages:
 
 * Dynamic type system (to allow arbitrary data from e.g. parsing JSON, which is usefull in distributed programming, e.g. in communication between a web server and a browser).  Some limited type inference is implemented in the experimental compiler.  Detecting errors at compile time is always desirable, when possible.
 * Pattern matching, as used in Haskell and Erlang, in function clauses and case constructs
+* String concatenation and array concatenation as decomposition in patterns
 * Exceptions (`Try`-[`of`|`in`]-`catch`-`finally`), with pattern matching in the `of` and `catch` clauses (Erlang style).
 * Lexical scope
 
@@ -58,7 +59,7 @@ An idea is to avoid `[]` and `{}` in the control flow, since these are used in t
 The constructs so far, which will certainly change, are
 
 * `expr1 ; expr2` - Evalueate `expr1` and discard the result.  Then evaluate `expr2`.  The result is that of `expr2`.
-* `expr1 ++ expr2` - Array concatenation and string concatenation.
+* `expr1 ~ expr2` - String concatenation.
 * `if expr1 then expr2 else expr3` - Functional, like the `? :` construct in C, Java etc.
 * `pattend = expression` - Match an expression agains a patten an bind the free variables in pattern.  Raises an exception if the matching fails.
 

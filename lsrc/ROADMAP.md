@@ -25,7 +25,7 @@ values.
 * Infer the last access of every variable [DONE]
 * Consistent discard of variables in unused branches, if-then-else [DONE]
 * Type assertions for concatenations in expressions [DONE]
-* Documentation of the language and the implementation so far
+* Documentation of the language and the implementation so far [DONE]
 * Fix the directory structure and create repository [DONE]
 
 Milestone 2: Logic operations
@@ -38,18 +38,17 @@ Milestone 2: Logic operations
 
 Milestone 3: String concatenation in patterns
 
-* Add "fixed" annotation in patterns
-* Check that at least one operand of ++ in a pattern is fixed
-* Compile patterns containing string concatenation
+* Add "fixed" annotation in patterns [DONE]
+* Check that at least one operand of ~ in a pattern is fixed [DONE]
+* Compile patterns containing string concatenation [DONE]
 
 Milestone 4: Arrays
 
-* Array constuctor syntax "[" ... "]" in the grammar
-* Array value representation in runtime
+* Array constuctor syntax "[" ... "]" in the grammar [DONE]
+* Array value representation in runtime [DONE]
 * Array concatenation: compilation and basic type error detection
-* Add "length known" annotation on arrays (in patterns)
-* Compile patterns containing array concatenation (overloaded string concat
-  operator)
+* Add "fixed" annotation on arrays (in patterns)
+* Compile patterns containing array concatenation
 
 Dicts:
 

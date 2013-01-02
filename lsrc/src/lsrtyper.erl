@@ -107,26 +107,25 @@ check_prog(Prog = #prog{body = E}, Scope) ->
 
 %% @doc Checks and type-matches a pattern against a type
 -spec t_pattern(expr(), typename(), nested_scope()) -> {expr(), nested_scope()}.
-t_pattern(Expr = #expr{body = Var = #var{name=Name}}, T, Scope) ->
+t_pattern(Expr = #expr{body = Var = #var{name=Name}, line = Line}, T, Scope) ->
 	case lookup_var(Name, Scope) of
 		undefined ->
-			% New variable. Bind and add it to the scope with type T.
+			%% New variable. Bind and add it to the scope with type T.
 			Scope2 = add_var(Name, T, Scope),
 			Expr2 = Expr#expr{body = Var#var{action = bind},
 			                  type = T,
 			                  accessed = lsrvarsets:from_list([Name])},
 			{Expr2, Scope2};
-		T ->
-			% TODO Extend the rules for compatible subtypes
+		VarType ->
+			%% Catch obvious type errors
+			is_subtype_of(T, VarType) orelse is_subtype_of(VarType, T) orelse
+				throw(io_lib:format("Type mismatch for variable ~s on line ~p."
+				                    " Got ~p, expected ~p.",
+				                    [Name, Line, VarType, T])),
 			Expr2 = Expr#expr{body = Var#var{action = access},
 			                  type = T,
 			                  accessed = lsrvarsets:from_list([Name])},
-			{Expr2, Scope};
-		BadT ->
-			#expr{line = Line} = Expr,
-			throw(io_lib:format("Type mismatch for variable ~s on line ~p."
-			                    " Got ~p, expected ~p.",
-			                    [Name, Line, BadT, T]))
+			{Expr2, Scope}
 	end;
 t_pattern(Expr = #expr{body = #literal{type = Type}}, T, Scope) ->
 	case is_subtype_of(Type, T) of
@@ -174,7 +173,7 @@ t_pattern(#expr{line = Line}, _T, _Scope) ->
 %% Throws an error message (iolist) on type errors.
 -spec t(expr(), nested_scope()) -> {expr(), nested_scope()}.
 
-% Sequence: Eval E1 and thow away value, then eval E2.
+%% Sequence: Eval E1 and thow away value, then eval E2.
 t(Expr = #expr{body = Binop = #binop{op=seq, left=E1, right=E2}}, Scope) ->
 	{E1a = #expr{accessed = A1}, Scope1} = t(E1, Scope),
 	{E2a = #expr{accessed = A2, type = T}, Scope2} = t(E2, Scope1),
@@ -183,7 +182,7 @@ t(Expr = #expr{body = Binop = #binop{op=seq, left=E1, right=E2}}, Scope) ->
 	                  accessed = lsrvarsets:union(A1, A2)},
 	{Expr1, Scope2};
 
-% Variable access
+%% Variable access
 t(Expr = #expr{body = Var = #var{name = Name}, line = Line}, Scope) ->
 	case lookup_var(Name, Scope) of
 		undefined ->
@@ -196,11 +195,11 @@ t(Expr = #expr{body = Var = #var{name = Name}, line = Line}, Scope) ->
 			{Expr1, Scope}
 	end;
 
-% Literal
+%% Literal
 t(Expr = #expr{body = #literal{type = Type}}, Scope) ->
 	{Expr#expr{type = Type, accessed = lsrvarsets:new()}, Scope};
 
-% if-then-else
+%% if-then-else
 t(Expr = #expr{body = If = #'if'{'cond' = E1, 'then' = E2, 'else' = E3},
                line = Line},
   Scope) ->
@@ -214,7 +213,7 @@ t(Expr = #expr{body = If = #'if'{'cond' = E1, 'then' = E2, 'else' = E3},
 	                  accessed = lsrvarsets:union([A1, A2, A3])},
 	{Expr1, Scope3};
 
-% String concatenation
+%% String concatenation
 t(Expr = #expr{body = Strcat = #strcat{left = E1, right = E2}, line = Line},
   Scope) ->
 	{Ae1 = #expr{type = T1, accessed = A1}, Scope1} = t(E1, Scope),
@@ -234,12 +233,11 @@ t(Expr = #expr{body = Strcat = #strcat{left = E1, right = E2}, line = Line},
 	                  accessed = lsrvarsets:union(A1, A2)},
 	{Expr1, Scope2};
 
-% Array concatenation
+%% Array concatenation
 t(Expr = #expr{body = Arrcat = #arrcat{left = E1, right = E2}, line = Line},
   Scope) ->
 	{Ae1 = #expr{type = T1, accessed = A1}, Scope1} = t(E1, Scope),
 	{Ae2 = #expr{type = T2, accessed = A2}, Scope2} = t(E2, Scope1),
-	%% T = get_common_supertype(T1, T2),
 	is_subtype_of(array, T1) orelse
 		throw(io_lib:format("Can't use ~p on the left side in array "
 		                    "concatenation on line ~p",
