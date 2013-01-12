@@ -277,7 +277,7 @@ t_exprs(nil, Scope) ->
 t_exprs(Exprs = #cons{head = Head, tail = Tail}, Scope) ->
 	{Head1 = #expr{accessed = A1}, Scope1} = t(Head, Scope),
 	{Tail1, Scope2} = t_exprs(Tail, Scope1),
-	A2 = case Tail of
+	A2 = case Tail1 of
 		nil                  -> lsrvarsets:new();
 		#cons{accessed = A}  -> A
 	end,

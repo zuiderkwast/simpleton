@@ -46,6 +46,7 @@ Milestone 4: Arrays
 
 * Array constuctor syntax "[" ... "]" in the grammar [DONE]
 * Array value representation in runtime [DONE]
+* Compilation of array construction [DONE]
 * Array concatenation: compilation and basic type error detection
 * Add "fixed" annotation on arrays (in patterns)
 * Compile patterns containing array concatenation

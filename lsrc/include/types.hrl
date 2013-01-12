@@ -20,9 +20,9 @@
 -record('if',    {'cond' :: expr(), 'then' :: expr(), 'else' :: expr()}).
 -record(array,   {length :: integer(), elems :: exprs()}).
 
--record(cons, {head     :: expr(),
-               tail     :: exprs(),
-               accessed :: lsrvarsets:varset()}).
+-record(cons, {head               :: expr(),
+               tail               :: exprs(),
+               accessed = unknown :: lsrvarsets:varset()}).
 -type exprs() :: #cons{} | nil.
 
 -type exprbody() :: #var{} | #literal{} | #strcat{} | #arrcat{} | #binop{} |

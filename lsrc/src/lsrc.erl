@@ -98,6 +98,17 @@ c_vardecls([], _, Acc) ->
 c_vardecls([{Name, Type} | Vars], Indent, Acc) ->
 	c_vardecls(Vars, Indent, [decl(Name, Type, Indent) | Acc]).
 
+
+%% @doc Generate code for incrementing the reference-counter, expept if we know
+%% by the type that it's not reference-counted. Takes a type or an expr for
+%% convenience.
+-spec incref(VarName::string(), typename() | expr()) -> iolist().
+incref(_, #expr{body = #literal{type = string}}) -> []; %% string literals
+incref(VarName, #expr{type = T}) -> incref(VarName, T); %% any other expr
+incref(_, boolean) -> [];
+incref(VarName, _) -> [" lsr_incref(", VarName, ");"].
+
+
 %% @doc Check a value (c variable) against a pattern. The SuccessBool is a
 %% c bool expression indicating success.
 -spec c_match(Pattern::#expr{}, #subject{}, #state{}) ->
@@ -108,11 +119,7 @@ c_match(#expr{body=#var{action=bind, name=VarName}, type=VarType},
         State = #state{indent=Indent}) ->
 	% Assignment code, increment ref-counter
 	BindCode = [indent(Indent), VarName, " = ", Value, ";",
-	            case VarType of
-	                boolean -> [];
-	                _       -> [" lsr_incref(", VarName, ");"]
-	            end,
-	            "\n"],
+	            incref(VarName, VarType), "\n"],
 	{[], [],	 [], BindCode, State};
 c_match(#expr{body=#var{action=bind, name=VarName}},
         #subject{value=Value, type=string, offset=Offset, length=Length},
@@ -123,7 +130,6 @@ c_match(#expr{body=#var{action=bind, name=VarName}},
 	            "lsr_substr(", Value, ", ", Offset, ", ", Length, ");",
 	            " lsr_incref(", VarName, ");\n"],
 	{[], [],	 [], BindCode, State};
-
 
 % Expression as pattern: compare equal to the pattern subject
 c_match(Expr = #expr{body=Body}, Subject = #subject{}, State)
@@ -286,7 +292,7 @@ c(#expr{body = #'if'{'cond' = E1 = #expr{type = T1},
 	State5 = indent_less(State4),
 	Decl = [Decl1, decl(RetVar, T, Indent)],
 	Code = [Code1, BoolCheck,
-	        indent(Indent), "if (lsr_ptr_to_bool(", RetVar1, ")) {\n",
+	        indent(Indent), "if (lsr_bool_value(", RetVar1, ")) {\n",
 	        Decl2, Discard2, Code2,
 	        indent(Indent + 1), RetVar, " = ", RetVar2, ";\n",
 	        indent(Indent), "} else {\n", 
@@ -367,6 +373,23 @@ c(#expr{body = #assign{pat = Pattern, expr = Expr}, type = ExprType},
 	 ExprVar,
 	 State3};
 
+c(#expr{body = #array{length = Length, elems = Elems}, type = array},
+  State = #state{indent = Indent}) ->
+  	{RetVar, State1} = new_tmpvar(State, "_array"),
+	InitDecl = [indent(Indent), c_type(array), " ", RetVar, ";\n"],
+	InitCode = [indent(Indent), RetVar, " = ",
+	            "lsr_array_create(", integer_to_list(Length), ");\n"],
+	State2 = indent_more(State1),
+	{ElemsDecl, ElemsCode, State3} = c_array_elems(Elems, RetVar, 0, State2),
+	State4 = indent_less(State3),
+	{InitDecl,
+	 [InitCode,
+	  indent(Indent), "{ /* populate array */\n",
+	  ElemsDecl,
+	  ElemsCode,
+	  indent(Indent), "}\n"],
+	 RetVar, State4};
+
 % Variable access
 c(#expr{body = #var{name = Name, action = AccessType}, type = boolean},
   State = #state{indent = Indent}) ->
@@ -379,7 +402,7 @@ c(#expr{body = #var{name = Name, action = AccessType}, type = boolean},
 	{[], Code, Name, State};
 c(#expr{body = #var{name = Name, action = AccessType}, type = Type},
   State = #state{indent = Indent})
-			when Type =:= string; Type =:= any ->
+			when Type =:= string; Type =:= array; Type =:= any ->
 	Code = case AccessType of
 		lastaccess -> [indent(Indent), "lsr_decref(", Name, ");",
 		               " /* last access */\n"];
@@ -408,6 +431,19 @@ c(#expr{body = #literal{type = string, data = Content}},
 	        c_string_literal(Content), ";\n"],
 	{Decl, [], Name, State2}.
 
+-spec c_array_elems(exprs(), ArrayVar::string(), Pos::integer(), #state{}) ->
+	{Decl::iolist(), Code::iolist(), #state{}}.
+c_array_elems(nil, _ArrayVar, _Pos, State) ->
+	{[], [], State};
+c_array_elems(#cons{head = Head, tail = Tail}, ArrayVar, Pos,
+        State = #state{indent = Indent}) ->
+	{Decl,  Code,  HeadVar, State1} = c(Head, State),
+	{Decls, Codes, State2} = c_array_elems(Tail, ArrayVar, Pos + 1, State1),
+	InsCode = [indent(Indent), "lsr_array_set(", ArrayVar, ", ",
+	           integer_to_list(Pos), ", ", HeadVar, ");", incref(HeadVar, Head),
+	           "\n"],
+	{[Decl | Decls], [Code, InsCode | Codes], State2}.
+
 -spec discard_vars(string(), integer()) -> iolist().
 discard_vars(Names, Indent) ->
 	lists:map(fun (Name) -> [indent(Indent), "lsr_discard_ref(", Name, "); /* never used after this point */\n"] end,
@@ -433,13 +469,15 @@ new_tmpvar(State = #state{nexttmp=NextTmp}, Suffix) ->
 	{"tmp" ++ integer_to_list(NextTmp) ++ Suffix,
 	 State#state{nexttmp = NextTmp + 1}}.
 
+%% @doc Known type to runtime type. If we want unboxed values in specific cases,
+%% we could do it here.
 c_type(_Type) ->
 	%case Type of string -> "lsr_t *"; boolean -> "bool" end.
 	"lsr_t *".
 
 c_boolean_literal(Content) ->
 	C_bool = case Content of true -> "true"; false -> "false" end,
-	["lsr_bool_to_ptr(", C_bool, ")"].
+	["lsr_create_bool(", C_bool, ")"].
 c_string_literal(Content) ->
 	["lsr_string_literal(", Content, ")"].
 
