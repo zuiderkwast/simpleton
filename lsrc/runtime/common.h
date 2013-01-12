@@ -21,7 +21,12 @@ typedef struct {
 /* string literals:             '\01' .. '\04' */
 #define LSR_STRING              '\05'
 #define LSR_ARRAY               '\06'
+#define LSR_DICT                '\07'
 
+/* Masked types */
+#define LSR_BOOL                '\010'
+#define LSR_INT                 '\011'
+#define LSR_NULL                '\012'
 
 /* error handling: print message and exit */
 #define lsr_error(msg) do {\
@@ -72,9 +77,10 @@ static inline void lsr_free(void * ptr, size_t size) {
 }
 
 
-/*
- * general stuff for lsr_t *
- */
+/*----------------------------------------------------------------------
+ * Masked types (bool, int), i.e. valus masked inside an lsr_t pointer,
+ * with the last two bits != 00
+ *----------------------------------------------------------------------*/
 
 /*
  * Pointers have 00, while masked types have a 1 in one of the two least
@@ -84,12 +90,44 @@ static inline bool lsr_is_masked(lsr_t *ptr) {
 	return (size_t)ptr & 3;
 }
 
-static inline bool lsr_ptr_is_refcounted(lsr_t *ptr) {
-	return ptr->type > '\04';
+/*----------------------------------------------------------------------
+ * Booleans, stored inside pointers as 01111x10, where x is 1 for true,
+ * 0 for false.  In ascii, these are '>' (true) and ':' (false).
+ *----------------------------------------------------------------------*/
+
+/*
+ * Convert a pointer to boolean.  If it's not a boolean, the result is
+ * undefined.  Use lsr_is_bool if you need to check in advance.
+ */
+static inline bool lsr_bool_value(lsr_t * ptr) {
+	size_t n = (size_t)ptr;
+	return (bool)(n & ~':');
 }
 
-static inline char lsr_type(lsr_t *ptr) {
-	return ptr->type;
+static inline lsr_t * lsr_create_bool(bool yes) {
+	return (lsr_t *)(size_t)(yes ? '>' : ':');
+}
+
+static inline bool lsr_is_bool(lsr_t * ptr) {
+	return ((size_t)(ptr) & ':') == ':';
+}
+
+/*
+ * Check if a pointer contains a masked boolean and raise an error if not.
+ */
+static inline void lsr_ensure_boolean(lsr_t * ptr) {
+	if (!lsr_is_bool(ptr))
+		lsr_error("Non-boolean value in lsr_ensure_boolean");
+}
+
+/*---------------
+ * Pointer types.
+ *---------------*/
+
+/* ptr must be a real pointer, i.e. not a masked value */
+static inline bool lsr_ptr_is_refcounted(lsr_t *ptr) {
+	/* All except string literals */
+	return ptr->type >= LSR_STRING;
 }
 
 /*
@@ -125,36 +163,3 @@ static inline size_t lsr_get_refc(lsr_t *ptr) {
 #endif
 	return ptr->refc;
 }
-
-/*----------------------------------------------------------------------
- * Booleans, stored inside pointers as 01111x10, where x is 1 for true,
- * 0 for false.  In ascii, these are '>' (true) and ':' (false).
- *----------------------------------------------------------------------*/
-
-/*
- * Convert a pointer to boolean.  If it's not a boolean, the result is
- * undefined.  Use lsr_is_boolean if you need to check in advance.
- */
-static inline bool lsr_ptr_to_bool(lsr_t * ptr) {
-	size_t n = (size_t)ptr;
-	return (bool)(n & ~':');
-}
-
-static inline lsr_t * lsr_bool_to_ptr(bool yes) {
-	return (lsr_t *)(size_t)(yes ? '>' : ':');
-}
-
-static inline bool lsr_is_boolean(lsr_t * ptr) {
-	return ((size_t)(ptr) & ':') == ':';
-}
-
-/*
- * Check if a pointer contains a masked boolean and raise an error if not.
- */
-static inline void lsr_ensure_boolean(lsr_t * ptr) {
-	if (!lsr_is_boolean(ptr))
-		lsr_error("Non-boolean value in lsr_ensure_boolean");
-}
-
-/*-------------------------------------------------------------------*/
-

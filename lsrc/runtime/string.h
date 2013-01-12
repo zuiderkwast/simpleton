@@ -23,16 +23,15 @@ typedef struct {
 } lsr_string_t;
 
 static inline bool lsr_ptr_is_string_const(lsr_t *ptr) {
-	return ptr->type <= '\04';
+	return ptr->type < LSR_STRING;
 }
 
 static inline bool lsr_ptr_is_string(lsr_t *ptr) {
-	return ptr->type <= '\05';
+	return ptr->type <= LSR_STRING;
 }
 
 static inline bool lsr_is_string(lsr_t *ptr) {
-	return !lsr_is_masked(ptr) &&
-	       (lsr_ptr_is_string_const(ptr) || lsr_type(ptr) == LSR_STRING);
+	return !lsr_is_masked(ptr) && lsr_ptr_is_string(ptr);
 }
 
 static inline void lsr_assert_string(lsr_t *ptr) {
@@ -55,19 +54,19 @@ static inline char * lsr_string_const_chars(lsr_t *ptr) {
 
 /* returns a pointer to the char array in a tagged string */
 static inline char * lsr_chars(lsr_t *ptr) {
+	if (!lsr_is_string(ptr))
+		lsr_type_error(ptr, "lsr_chars");
 	if (lsr_ptr_is_string_const(ptr))
 		return lsr_string_const_chars(ptr);
-	if (lsr_type(ptr) == LSR_STRING)
-		return ((lsr_string_t *)ptr)->chars;
-	lsr_type_error(ptr, "lsr_chars");
+	return ((lsr_string_t *)ptr)->chars;
 }
 
 static inline size_t lsr_strlen(lsr_t *ptr) {
+	if (!lsr_is_string(ptr))
+		lsr_type_error(ptr, "lsr_strlen");
 	if (lsr_ptr_is_string_const(ptr))
 		return strlen(lsr_string_const_chars(ptr));
-	if (lsr_type(ptr) == LSR_STRING)
-		return ((lsr_string_t *)ptr)->len;
-	lsr_type_error(ptr, "lsr_strlen");
+	return ((lsr_string_t *)ptr)->len;
 }
 
 /*
@@ -125,13 +124,6 @@ static inline lsr_t *lsr_string_concat(lsr_t *a, lsr_t *b) {
 		lsr_free(b, lsr_sizeof_string(((lsr_string_t *)b)->len));
 	}
 	return (lsr_t *)c;
-}
-
-static inline lsr_t *lsr_concat(lsr_t *a, lsr_t *b) {
-	/* strings only, so far. arrays to come. */
-	lsr_assert_string(a);
-	lsr_assert_string(b);
-	return lsr_string_concat(a, b);
 }
 
 /* a and b must be strings. no type check. */
