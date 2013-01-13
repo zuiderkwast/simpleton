@@ -137,6 +137,23 @@ t_pattern(Expr = #expr{body = #literal{type = Type}}, T, Scope) ->
 			                    " on line ~p, near ~p.~n",
 			                    [Type, T, Line, Data]))
 	end;
+t_pattern(Pat = #expr{body = Array = #array{elems = Elems},
+                      line = Line},
+          T, Scope) ->
+	is_subtype_of(array, T) orelse
+		throw(io_lib:format("Can't match ~p against array pattern "
+		                    "on line ~p.",
+		                    [T, Line])),
+	{Elems1, Scope1} = t_array_pattern(Elems, Scope), %% <--- FIXME
+	Accessed = case Elems1 of
+		nil                 -> lsrvarsets:new();
+		#cons{accessed = A} -> A
+	end,
+	Pat1 = Pat#expr{body = Array#array{elems = Elems1},
+	                type = array,
+	                accessed = Accessed},
+	{Pat1, Scope1};
+
 t_pattern(Pat = #expr{body = Strcat = #strcat{left = L, right = R},
                       line = Line},
           T, Scope) ->
@@ -167,6 +184,22 @@ t_pattern(Pat = #expr{body = Strcat = #strcat{left = L, right = R},
 	{Pat1, Scope2};
 t_pattern(#expr{line = Line}, _T, _Scope) ->
 	throw(io_lib:format("Invalid pattern on line ~p.", [Line])).
+
+-spec t_array_pattern(exprs(), nested_scope()) ->
+	{exprs(), nested_scope()}.
+t_array_pattern(nil, Scope) ->
+	{nil, Scope};
+t_array_pattern(Cons = #cons{head=Head, tail=Tail}, Scope) ->
+	{Head1 = #expr{accessed=A1}, Scope1} = t_pattern(Head, any, Scope),
+	{Tail1, Scope2} = t_array_pattern(Tail, Scope1),
+	A2 = case Tail1 of
+		nil               -> lsrvarsets:new();
+		#cons{accessed=A} -> A
+	end,
+	Cons1 = Cons#cons{head = Head1,
+	                  tail = Tail1,
+	                  accessed = lsrvarsets:union(A1, A2)},
+	{Cons1, Scope2}.
 
 %% @doc Checks and annotates an expression. Returns the annotated expression
 %% and the possibly modified scope.

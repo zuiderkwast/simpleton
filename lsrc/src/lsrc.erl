@@ -140,6 +140,24 @@ c_match(Expr = #expr{body=Body}, Subject = #subject{}, State)
 	EqCode = c_equality_check(ExprResult, Subject, State2),
 	{Decl, [Code, EqCode], [], [], State2};
 
+% Array decomposition
+c_match(#expr{body = #array{length = Length, elems = Elems}, type = array},
+        Subject = #subject{value=Value, type=ValueType, faillabel=FailLabel,
+                           offset=none, length=none},
+        State = #state{indent = Indent}) ->
+	TypeCheck = case ValueType of
+		array -> [];
+		_      -> [indent(Indent),
+		           "if (lsr_type(", Value, ") != LSR_ARRAY)",
+		           " goto ", FailLabel, ";\n"]
+	end,
+	LenCheck = [indent(Indent),
+	            "if (lsr_array_len(", Value, ") != ", integer_to_list(Length), ")",
+	            " goto ", FailLabel, ";\n"],
+	{MatchDecl, MatchCode, BindDecl, BindCode, State1} =
+		c_match_array_elems(Elems, Subject, 0, State),
+	{MatchDecl, [TypeCheck, LenCheck, MatchCode], BindDecl, BindCode, State1};
+
 %% String concatenation as pattern. Assert string, find subject's length and
 %% skip to helper.
 c_match(Expr = #expr{body = #strcat{}, type = string},
@@ -152,7 +170,7 @@ c_match(Expr = #expr{body = #strcat{}, type = string},
 		_      -> [indent(Indent),
 		           "if (!lsr_is_string(", Value, ")) goto ", FailLabel, ";\n"]
 	end,
-	{LenDecl, LenCode, LenVar, State1} = c_length(Value, string, State),
+	{LenDecl, LenCode, LenVar, State1} = c_strlen(Value, State),
 	Subject1 = Subject#subject{offset=Offset, length=LenVar, type=string},
 	{Decl, Code, BindDecl, BindCode, State2} = c_match(Expr, Subject1, State1),
 	{[LenDecl, Decl], [TypeCheck, LenCode, Code], BindDecl, BindCode, State2};
@@ -173,7 +191,7 @@ c_match(#expr{body = #strcat{left = L, right = R}},
 
 	%% Compile CheckExpr
 	{Decl1, Code1, CheckVal, State1} = c(CheckExpr, State),
-	{Decl2, Code2, CheckValLen, State2} = c_length(CheckVal, string, State1),
+	{Decl2, Code2, CheckValLen, State2} = c_strlen(CheckVal, State1),
 
 	%% Split Subject into CheckSubject and RestSubject
 	{Decl3, Code3, CheckSubject, RestSubject, State3} =
@@ -198,6 +216,31 @@ c_match(#expr{body = #strcat{left = L, right = R}},
 	{[Decl1, Decl2, Decl3, Decl4],
 	 [Code1, Code2, Code3, Code4, Code5, Code6],
 	 BindDecl, BindCode, State4}.
+
+-spec c_match_array_elems(exprs(), Subject::#subject{}, Pos::integer, #state{}) ->
+	{MatchDecl::iolist(), MatchCode::iolist(),
+	 BindDecl::iolist(), BindCode::iolist(), #state{}}.
+c_match_array_elems(nil, _, _, State) ->
+	{[], [], [], [], State};
+c_match_array_elems(#cons{head=HeadPat, tail=TailPat},
+                    Subject = #subject{value=Value},
+                    Pos, State = #state{indent=Indent}) ->
+	{HeadValue, State1} = new_tmpvar(State, "_array_elem"),
+	HeadType = any,
+	HeadDecl = [indent(Indent), c_type(HeadType), " ", HeadValue, ";\n"],
+	HeadCode = [indent(Indent), HeadValue, " = ",
+	            "lsr_array_get(", Value, ", ", integer_to_list(Pos), ");\n"],
+	HeadSubject = Subject#subject{value = HeadValue, type = HeadType},
+	{MatchDecl, MatchCode, BindDecl, BindCode, State2} =
+		c_match(HeadPat, HeadSubject, State1),
+	{MatchDecls, MatchCodes, BindDecls, BindCodes, State3} =
+		c_match_array_elems(TailPat, Subject, Pos + 1, State2),
+	{[HeadDecl, MatchDecl | MatchDecls],
+	 [HeadCode, MatchCode | MatchCodes],
+	 [BindDecl | BindDecls],
+	 [BindCode | BindCodes],
+	 State3}.
+
 
 %% Split a pattern subject into a check part and a match part.
 -spec split_subject(#subject{}, left | right, string(), #state{}) ->
@@ -251,18 +294,26 @@ c_equality_check(CheckVar,
 	 Offset, ", ", Length, ")) ", "goto ", FailLabel, ";\n"].
 
 
-%% @doc C code for the length of a value (string or array)
--spec c_length(Value::iolist(), typename(), #state{}) ->
+%% @doc C code for the length of a string value
+-spec c_strlen(Value::iolist(), #state{}) ->
+	{Decl::iolist(), Code::iolist(), RetVar::string(), State::#state{}}.
+c_strlen(Value, State) ->
+	c_length_helper("lsr_strlen", Value, State).
+
+%% @doc C code for the length of an array value
+-spec c_arrlen(Value::string(), #state{}) ->
+	{Decl::iolist(), Code::iolist(), RetVar::string(), State::#state{}}.
+c_arrlen(Value, State) ->
+	c_length_helper("lsr_array_len", Value, State).
+
+-spec c_length_helper(LenFunName::string(), Value::string(), #state{}) ->
 	{Decl::iolist(), Code::iolist(), RetVar::iolist(), State::#state{}}.
-c_length(Value, Type, State = #state{indent = Indent}) ->
-	LenFunc = case Type of
-		string -> "lsr_strlen";
-		array -> fixme
-	end,
+c_length_helper(LenFunName, Value, State = #state{indent = Indent}) ->
 	{Var, State1} = new_tmpvar(State, "_length"),
 	Decl = [indent(Indent), "size_t ", Var, ";\n"],
-	Code = [indent(Indent), Var, " = ", LenFunc, "(", Value, ");\n"],
+	Code = [indent(Indent), Var, " = ", LenFunName, "(", Value, ");\n"],
 	{Decl, Code, Var, State1}.
+
 
 -spec c(#expr{}, #state{}) -> {iolist(), iolist(), iolist(), #state{}}.
 c(#expr{body = #'if'{'cond' = E1 = #expr{type = T1},
@@ -354,7 +405,6 @@ c(#expr{body = #assign{pat = Pattern, expr = Expr}, type = ExprType},
 	Subject = #subject{value = ExprVar,
 	                   type = ExprType,
 	                   faillabel = FailLabel},
-	_ = Subject, %% FIXME pass subject to c_match
 	{MatchDecl, MatchCode,
 	 BindDecl, BindCode, State3} = c_match(Pattern, Subject, State2),
 	% Code to assert successed match and raise an error otherwise
