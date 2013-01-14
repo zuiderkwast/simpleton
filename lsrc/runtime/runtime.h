@@ -1,6 +1,10 @@
 /* Runtime for lsrc compiled programs */
 
 #include "common.h"
+
+/* functions needed by string.h, array.h etc */
+static inline bool lsr_equals(lsr_t *a, lsr_t *b);
+
 #include "string.h"
 #include "array.h"
 
@@ -10,7 +14,6 @@
 
 static inline void lsr_free_unused(lsr_t *ptr);
 static inline void lsr_discard_ref(lsr_t *ptr);
-static inline bool lsr_equals(lsr_t *a, lsr_t *b);
 static inline char lsr_type(lsr_t *ptr);
 static inline lsr_t *lsr_to_json(lsr_t *ptr);
 

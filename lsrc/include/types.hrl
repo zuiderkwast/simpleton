@@ -6,7 +6,7 @@
 -type nested_scope() :: [scope()].
 
 %% Annotated AST
--type accesstype() :: bind | access | lastaccess.
+-type accesstype() :: bind | discard | access | lastaccess.
 
 -record(var,     {name :: string(),
                   action = unknown :: accesstype() | unknown}).

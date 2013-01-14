@@ -10,7 +10,7 @@ true|false : {token, {boolean, TokenLine, list_to_atom(TokenChars)}}.
 
 if|then|else : {token, {list_to_atom(TokenChars),  TokenLine}}.
 
-[a-zA-Z][a-zA-Z0-9_]* : {token, {ident, TokenLine, TokenChars}}.
+[a-zA-Z_][a-zA-Z0-9_]* : {token, {ident, TokenLine, TokenChars}}.
 
 ~       : {token, {'~', TokenLine}}.
 @       : {token, {'@', TokenLine}}.

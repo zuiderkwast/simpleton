@@ -43,3 +43,34 @@ static inline lsr_t *lsr_array_get(lsr_t *array, unsigned int i) {
 static inline void lsr_array_set(lsr_t *array, unsigned int i, lsr_t *value) {
 	aadeque_set((aadeque_t *)array, i, value);
 }
+
+/* Returns a slice of an array. Reuses the array if possible. */
+static inline lsr_t *lsr_array_slice(lsr_t *array,
+                                     unsigned int offset,
+                                     unsigned int length) {
+	aadeque_t *a = (aadeque_t *)array;
+	if (array->refc == 0) {
+		/* reuse */
+		unsigned int last_n = aadeque_len(a) - offset - length;
+		a = aadeque_delete_last_n(a, last_n);
+		a = aadeque_delete_first_n(a, offset);
+		return (lsr_t *)a;
+	}
+	return (lsr_t *)aadeque_slice(a, offset, length);
+}
+
+/*
+ * Compare an array agains a slice of another array
+ */
+static inline bool lsr_equals_slice(lsr_t *array, lsr_t *subject,
+                                    unsigned int offset, unsigned int length) {
+	aadeque_t *a = (aadeque_t *)array,
+	          *b = (aadeque_t *)subject;
+	unsigned int i;
+	if (aadeque_len(a) != length)
+		return false;
+	for (i = 0; i < length; i++)
+		if (!lsr_equals(aadeque_get(a, i), aadeque_get(b, i + offset)))
+			return false;
+	return true;
+}

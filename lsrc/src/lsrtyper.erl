@@ -80,8 +80,10 @@ scope_to_varset([{Name, _Type}|Vars], Acc) ->
 -spec is_fixed(expr()) -> boolean().
 is_fixed(#expr{body = #literal{}}) -> true;
 is_fixed(#expr{body = #array{}})   -> true;
-is_fixed(#expr{body = #var{}})     -> false;
-is_fixed(#expr{body = #strcat{fixed=Fixed}}) -> Fixed.
+is_fixed(#expr{body = #var{action=A}}) ->
+	A =:= access orelse A =:= lastaccess;
+is_fixed(#expr{body = #strcat{fixed=Fixed}}) -> Fixed;
+is_fixed(#expr{body = #arrcat{fixed=Fixed}}) -> Fixed.
 
 %% @doc Annotates an abstract syntax tree.
 -spec annotate(#prog{}) -> {ok, #prog{}}
@@ -107,6 +109,11 @@ check_prog(Prog = #prog{body = E}, Scope) ->
 
 %% @doc Checks and type-matches a pattern against a type
 -spec t_pattern(expr(), typename(), nested_scope()) -> {expr(), nested_scope()}.
+t_pattern(Expr = #expr{body = Var = #var{name = "_"}}, T, Scope) ->
+	Expr2 = Expr#expr{body = Var#var{action = discard},
+	                  type = T,
+	                  accessed = lsrvarsets:new()},
+	{Expr2, Scope};
 t_pattern(Expr = #expr{body = Var = #var{name=Name}, line = Line}, T, Scope) ->
 	case lookup_var(Name, Scope) of
 		undefined ->
@@ -177,11 +184,41 @@ t_pattern(Pat = #expr{body = Strcat = #strcat{left = L, right = R},
 	                                    "fixed, on line ~p.",
 		                                [Line])),
 	Pat1 = Pat#expr{body = Strcat#strcat{left = L1,
-	                                       right = R1,
-	                                       fixed = F1 and F2},
-	                  type = string,
-	                  accessed = lsrvarsets:union(A1, A2)},
+	                                     right = R1,
+	                                     fixed = F1 and F2},
+	                type = string,
+	                accessed = lsrvarsets:union(A1, A2)},
 	{Pat1, Scope2};
+
+t_pattern(Pat = #expr{body = Arrcat = #arrcat{left = L, right = R},
+                      line = Line},
+          T, Scope) ->
+	{L1 = #expr{type = T1, accessed = A1}, Scope1} = t_pattern(L, T, Scope),
+	{R1 = #expr{type = T2, accessed = A2}, Scope2} = t_pattern(R, T, Scope1),
+	is_subtype_of(array, T) orelse
+		throw(io_lib:format("Can't match ~p against array concatenation "
+		                    "on line ~p.",
+		                    [T, Line])),
+	is_subtype_of(array, T1) orelse
+		throw(io_lib:format("Can't use ~p on the left side in array "
+		                    "concatenation, in pattern on line ~p",
+		                    [T1, Line])),
+	is_subtype_of(array, T2) orelse
+		throw(io_lib:format("Can't use ~p on the right side in array "
+		                    "concatenation in pattern on line ~p",
+		                    [T2, Line])),
+	F1 = is_fixed(L1),
+	F2 = is_fixed(R1),
+	F1 or F2 orelse throw(io_lib:format("At least one operand of @ must be "
+	                                    "fixed, on line ~p.",
+		                                [Line])),
+	Pat1 = Pat#expr{body = Arrcat#arrcat{left = L1,
+	                                     right = R1,
+	                                     fixed = F1 and F2},
+	                type = array,
+	                accessed = lsrvarsets:union(A1, A2)},
+	{Pat1, Scope2};
+
 t_pattern(#expr{line = Line}, _T, _Scope) ->
 	throw(io_lib:format("Invalid pattern on line ~p.", [Line])).
 
@@ -216,6 +253,10 @@ t(Expr = #expr{body = Binop = #binop{op=seq, left=E1, right=E2}}, Scope) ->
 	{Expr1, Scope2};
 
 %% Variable access
+t(#expr{body = #var{name = "_"}, line = Line}, _) ->
+	throw(io_lib:format("The variable _ can not be used in this context, "
+	                    "on line ~p",
+	                    [Line]));
 t(Expr = #expr{body = Var = #var{name = Name}, line = Line}, Scope) ->
 	case lookup_var(Name, Scope) of
 		undefined ->
@@ -365,6 +406,10 @@ mark_last_access(Expr = #expr{body = Body, accessed = A}, Name) ->
 	Body1 = case Body of
 		#var{name = Name, action = access} ->
 			Body#var{action = lastaccess};
+		#var{name = [$_|_], action = bind} ->
+			%% The variable is never used, but don't warn when the name starts
+			%% with an underscore.
+			Body#var{action = discard};
 		#var{name = Name, action = bind} ->
 			#expr{line = Line} = Expr,
 			throw(io_lib:format("Variable ~p on line ~p is never used.",
@@ -378,6 +423,12 @@ mark_last_access(Expr = #expr{body = Body, accessed = A}, Name) ->
 			case lsrvarsets:is_element(Name, get_accessed(E2)) of
 				true  -> Body#strcat{right = mark_last_access(E2, Name)};
 				false -> Body#strcat{left = mark_last_access(E1, Name)}
+			end;
+		#arrcat{left = E1, right = E2} ->
+			%% Accessed ok. In left, right or both?
+			case lsrvarsets:is_element(Name, get_accessed(E2)) of
+				true  -> Body#arrcat{right = mark_last_access(E2, Name)};
+				false -> Body#arrcat{left = mark_last_access(E1, Name)}
 			end;
 		#binop{op=Op, left=E1, right=E2} when Op =:= seq ->
 			%% Accessed ok. In left, right or both?
