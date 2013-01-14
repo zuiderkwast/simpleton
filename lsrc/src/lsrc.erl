@@ -279,7 +279,10 @@ c_match(#expr{body = #arrcat{left = L, right = R}},
 	%% Temporarily assert the first case, since it's the only one we can handle
 	%% so far.
 	%ok = {debug, CheckSide, FixedPat, RestPat},
-	#expr{body = #var{action = lastaccess}} = FixedPat,
+	case FixedPat of
+		#expr{body = #var{}} -> ok;
+		_ -> throw("Array concatenation not fully implemented, sorry!")
+	end,
 	%% -------------------------------------------------------------------------
 	{Decl1, Code1, CheckVal, State1} = c(FixedPat, State),
 	{Decl2, Code2, CheckValLen, State2} = c_arrlen(CheckVal, State1),
