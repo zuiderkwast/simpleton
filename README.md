@@ -1,7 +1,7 @@
-Lesser language
-===============
+Simpleton: A simple programming language
+========================================
 
-Lesser is a functional programming language that relies heavily on in-place
+Simpleton is a functional programming language that relies heavily on in-place
 update optimizations in an attempt to combine the following:
 
 * Immutable values, single assignment variables.
@@ -20,7 +20,7 @@ The project
 This is an experimental project, consisting of three parts:
 
 * language documentation,
-* a compiler `lsrc`, written in Erlang, which compiles Lesser to C code,
+* a compiler `lsrc`, written in Erlang, which compiles Simpleton to C code,
 * a runtime, written in C.
 
 This language is in a very early stage and not much has been decided.  The first
