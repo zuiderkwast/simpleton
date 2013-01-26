@@ -48,8 +48,8 @@ Milestone 4: Arrays
 * Array value representation in runtime [DONE]
 * Compilation of array construction and pattern [DONE]
 * Array concatenation: compilation and basic type error detection
-* Add "fixed" annotation on arrays (in patterns)
-* Compile patterns containing array concatenation
+* Add "fixed" annotation on arrays (in patterns) [DONE]
+* Compile patterns containing array concatenation [DONE]
 
 Dicts:
 
@@ -62,8 +62,8 @@ Unordered:
 * BIFs for string IO or argv
 * Function def (1-arity)
 * String-patterns (regex) with variable binding: `/(?<varname>pattern)/`
-* Indentation-aware lexer
+* Indentation-aware lexer [DONE]
 * Guards
-* Case
+* Case [PARTIAL]
 * Try [in | of] catch finally
 

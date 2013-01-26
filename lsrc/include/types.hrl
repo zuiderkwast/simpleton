@@ -11,6 +11,7 @@
 -record(var,     {name :: string(),
                   action = unknown :: accesstype() | unknown}).
 -record(literal, {type :: string | boolean, data :: any()}).
+-record(array,   {length :: integer(), elems :: exprs()}).
 -record(strcat,  {left :: expr(), right :: expr(),
                   fixed = unknown :: boolean() | unknown}).
 -record(arrcat,  {left :: expr(), right :: expr(),
@@ -18,15 +19,25 @@
 -record(binop,   {op :: seq, left :: expr(), right :: expr()}).
 -record(assign,  {pat :: expr(), expr :: expr()}).
 -record('if',    {'cond' :: expr(), 'then' :: expr(), 'else' :: expr()}).
--record(array,   {length :: integer(), elems :: exprs()}).
+-record('case',  {test :: expr(), rules :: rules()}).
 
+%% exprs, the comma-separated contents of an array [ ... ]
 -record(cons, {head               :: expr(),
                tail               :: exprs(),
                accessed = unknown :: lsrvarsets:varset()}).
 -type exprs() :: #cons{} | nil.
 
+%% Case rules on the from Pattern -> Expression
+-record(ruleset, {length :: integer(), rules :: rules()}).
+-record(rule, {pat :: expr(), expr :: expr()}).
+-record(rulecons, {head               :: rule(),
+                   tail               :: rules(),
+                   accessed = unknown :: lsrvarsets:varset()}).
+-type rule() :: #rule{}.
+-type rules() :: #rulecons{} | nil.
+
 -type exprbody() :: #var{} | #literal{} | #strcat{} | #arrcat{} | #binop{} |
-                    #assign{} | #'if'{} | #array{}.
+                    #assign{} | #'if'{} | #'case'{} | #array{}.
 
 -record(expr, {body               :: exprbody(),
                line               :: integer(),

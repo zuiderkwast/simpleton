@@ -1,3 +1,3 @@
-phrase = "My name is Jenkins.";
-"My name is " ~ n ~ "." = phrase;
+phrase = "My name is Jenkins."
+"My name is " ~ n ~ "." = phrase
 "Hello " ~ n ~ "!"

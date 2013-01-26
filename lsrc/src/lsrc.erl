@@ -18,12 +18,13 @@ compile(Src) ->
 
 %% @doc Compiles Lesser souce code to C code.
 %% Returns {ok, Code} or {error, Message}.
-compile(Bin, Verbose) when is_binary(Bin) ->
-	compile(binary_to_list(Bin), Verbose);
-compile(String, Verbose) when is_list(String) ->
+compile(String, Verbose) ->
 	try
-		{ok, Tokens, _Line} = lsrlexer:string(String),
-		% io:format("Tokens: ~p~n", [Tokens]),
+		{ok, Tokens} = lsrlexer:tokenize(String),
+		case Verbose of
+			true  -> io:format("Tokens:~n~p~n", [Tokens]);
+			false -> ok
+		end,
 		{ok, Tree} = lsrparser:parse(Tokens),
 		case Verbose of
 			true  -> io:format("Tree:~n~p~n", [Tree]);
@@ -38,8 +39,9 @@ compile(String, Verbose) when is_list(String) ->
 	catch
 		error:{badmatch, {error, Error}} ->
 			Message1 = case Error of
-				{Line, lsrparser, Message} ->
-					["Syntax: ", Message, " on line ", integer_to_list(Line)];
+				{{Line, Col}, lsrparser, Message} ->
+					io_lib:format("~s on line ~p, column ~p",
+					              [Message, Line, Col]);
 				{lsrtyper, Message} ->
 					["Type: ", Message];
 				Other ->
@@ -122,21 +124,18 @@ c_match(#expr{body=#var{action=bind, name=VarName}, type=VarType},
 	            incref(VarName, VarType), "\n"],
 	{[], [],	 [], BindCode, State};
 c_match(#expr{body=#var{action=bind, name=VarName}},
-        #subject{value=Value, type=string, offset=Offset, length=Length},
+        #subject{value=Value, type=Type, offset=Offset, length=Length},
         State = #state{indent=Indent})
-		when Offset =/= none, Length =/= none ->
+		when Offset =/= none, Length =/= none
+		     %(Type =:= string or Type =:= array)
+		     ->
 	% Assignment code, increment ref-counter
-	BindCode = [indent(Indent), VarName, " = "
-	            "lsr_substr(", Value, ", ", Offset, ", ", Length, ");",
-	            " lsr_incref(", VarName, ");\n"],
-	{[], [],	 [], BindCode, State};
-c_match(#expr{body=#var{action=bind, name=VarName}},
-        #subject{value=Value, type=array, offset=Offset, length=Length},
-        State = #state{indent=Indent})
-		when Offset =/= none, Length =/= none ->
-	% Assignment code, increment ref-counter
-	BindCode = [indent(Indent), VarName, " = "
-	            "lsr_array_slice(", Value, ", ", Offset, ", ", Length, ");",
+	SliceFun = case Type of
+		string -> "lsr_substr";
+		array  -> "lsr_array_slice"
+	end,
+	BindCode = [indent(Indent), VarName, " = ",
+	            SliceFun, "(", Value, ", ", Offset, ", ", Length, ");",
 	            " lsr_incref(", VarName, ");\n"],
 	{[], [],	 [], BindCode, State};
 c_match(#expr{body=#var{action=discard}}, _, State) ->
@@ -264,53 +263,65 @@ c_match(#expr{body = #arrcat{left = L, right = R}},
 		when Offset =/= none, Len =/= none ->
 
 	%% Decide sides
-	{FixedPat, RestPat, CheckSide} = case lsrtyper:is_fixed(L) of
+	{FixedPat, RestPat, FixedSide} = case lsrtyper:is_fixed(L) of
 		true  -> {L, R, left};
 		false -> {R, L, right}
 	end,
 
-	%% Compile FixedPat
-	%% FIXME: We know FixedPat is a pattern with a fixed length, but there are
-	%%        three cases:
-	%%          1. A bound variable, fixed but unknown length
-	%%          2. An array pattern, known length, but may contain
-	%%             free variables. (This case doesn't exist for strings.)
-	%%          3. Another array concatenation where both operands are fixed.
-	%% Temporarily assert the first case, since it's the only one we can handle
-	%% so far.
-	%ok = {debug, CheckSide, FixedPat, RestPat},
-	case FixedPat of
-		#expr{body = #var{}} -> ok;
-		_ -> throw("Array concatenation not fully implemented, sorry!")
-	end,
-	%% -------------------------------------------------------------------------
-	{Decl1, Code1, CheckVal, State1} = c(FixedPat, State),
-	{Decl2, Code2, CheckValLen, State2} = c_arrlen(CheckVal, State1),
+	%% We know FixedPat is a pattern with a fixed length, but there are three
+	%% cases:
+	%%   1. A bound variable, fixed but unknown length
+	%%   2. An array pattern, known length, but may contain free variables
+	%%      (This case doesn't exist for strings, except maybe future regex)
+	%%   3. Another array concatenation where both operands are fixed.
+	{Code1, FixedValLen} = c_array_length(FixedPat, FailLabel, Indent),
 
-	%% Split Subject into CheckSubject and RestSubject
-	{Decl3, Code3, CheckSubject, RestSubject, State3} =
-		split_subject(Subject, CheckSide, CheckValLen, State2),
+	%% Split Subject into FixedSubject and RestSubject
+	{Decl1, Code2, FixedSubject, RestSubject, State1} =
+		split_subject(Subject, FixedSide, FixedValLen, State),
 
-	%% A simple length assertion, since we have both lengths here
-	#subject{length=CheckSubjLen} = CheckSubject,
-	Code4 = case CheckValLen =:= CheckSubjLen of
-		true ->
-			[];
-		false ->
-			[indent(Indent), "if (", CheckValLen, " != ", CheckSubjLen, ") ",
-			 "goto ", FailLabel, ";\n"]
+	%% Total length check (unless they are identical)
+	#subject{length = FixedSubjLen} = FixedSubject,
+	Code3 = case FixedValLen =:= FixedSubjLen of
+		true  -> [];
+		false -> [indent(Indent), "if (", FixedValLen, " != ", FixedSubjLen, ")"
+		          " goto ", FailLabel, ";\n"]
 	end,
 
-	%% Check
-	Code5 = c_equality_check(CheckVal, CheckSubject, State3),
+	%% Match the fixed length pattern
+	{Decl2, Code4, BindFixedDecl, BindFixedCode, State2} =
+		c_match(FixedPat, FixedSubject, State1),
 
 	%% Match rest
-	{Decl4, Code6, BindDecl, BindCode, State4} =
-		c_match(RestPat, RestSubject, State3),
-	{[Decl1, Decl2, Decl3, Decl4],
-	 [Code1, Code2, Code3, Code4, Code5, Code6],
-	 BindDecl, BindCode, State4}.
+	{Decl3, Code5, BindRestDecl, BindRestCode, State3} =
+		c_match(RestPat, RestSubject, State2),
 
+	{[Decl1, Decl2, Decl3],
+	 [Code1, Code2, Code3, Code4, Code5],
+	 [BindFixedDecl, BindRestDecl], [BindFixedCode, BindRestCode], State3}.
+
+%% @doc Computes the length of an array expression that consists of array
+%% constuctors, array concatenation and bound variables. Returns a C expression
+%% for the length.
+-spec c_array_length(expr(), FailLabel::string(), Indent::integer()) ->
+	{Code::iolist(), LengthExpr::iolist()}.
+c_array_length(#expr{body = #var{name = Name, action = A}, type = Type},
+               FailLabel, Indent)
+		when A =:= access; A =:= lastaccess ->
+	Code = case Type of
+		array -> [];
+		_     -> [indent(Indent),
+		          "if (lsr_type(", Name, " != LSR_ARRAY)"
+		          " goto ", FailLabel, ";\n"]
+	end,
+	{Code, ["lsr_array_len(", Name, ")"]};
+c_array_length(#expr{body = #array{length = Length}}, _, _) ->
+	{[], integer_to_list(Length)};
+c_array_length(#expr{body = #arrcat{left = L, right = R, fixed = true}},
+               FailLabel, Indent) ->
+	{CodeL, LengthL} = c_array_length(L, FailLabel, Indent),
+	{CodeR, LengthR} = c_array_length(R, FailLabel, Indent),
+	{[CodeL, CodeR], [LengthL, " + ", LengthR]}.
 
 -spec c_match_array_elems(exprs(), Subject::#subject{}, Pos::integer, #state{}) ->
 	{MatchDecl::iolist(), MatchCode::iolist(),
@@ -319,7 +330,8 @@ c_match_array_elems(nil, _, _, State) ->
 	{[], [], [], [], State};
 c_match_array_elems(#cons{head=HeadPat, tail=TailPat},
                     Subject = #subject{value=Value,
-                                       offset=OffsetVar},
+                                       offset=OffsetVar,
+                                       faillabel=FailLabel},
                     Pos, State = #state{indent=Indent}) ->
 	{HeadValue, State1} = new_tmpvar(State, "_array_elem"),
 	HeadType = any,
@@ -330,7 +342,7 @@ c_match_array_elems(#cons{head=HeadPat, tail=TailPat},
 	end,
 	HeadCode = [indent(Indent), HeadValue, " = ",
 	            "lsr_array_get(", Value, ", ", SubjectPos, ");\n"],
-	HeadSubject = #subject{value = HeadValue, type = HeadType},
+	HeadSubject = #subject{value=HeadValue, type=HeadType, faillabel=FailLabel},
 	{MatchDecl, MatchCode, BindDecl, BindCode, State2} =
 		c_match(HeadPat, HeadSubject, State1),
 	{MatchDecls, MatchCodes, BindDecls, BindCodes, State3} =
@@ -350,7 +362,7 @@ split_subject(Subject = #subject{offset=Offset, length=Len},
               State = #state{indent=Indent}) ->
 	{RestLen, State1} = new_tmpvar(State, "_rest_length"),
 	Decl1 = [indent(Indent), "size_t ", RestLen, ";\n"],
-	Code1 = [indent(Indent), RestLen, " = ", Len, " - ", CheckLen, ";\n"],
+	Code1 = [indent(Indent), RestLen, " = ", Len, " - (", CheckLen, ");\n"],
 	{RestOffset, State2} = new_tmpvar(State1, "_rest_offset"),
 	Decl2 = [indent(Indent), "size_t ", RestOffset, ";\n"],
 	Code2 = [indent(Indent), RestOffset, " = ", Offset, " + ", CheckLen, ";\n"],
@@ -364,8 +376,8 @@ split_subject(Subject = #subject{offset=Offset, length=Len},
               State = #state{indent=Indent}) ->
 	{RestLen, State1} = new_tmpvar(State, "_rest_length"),
 	Decl1 = [indent(Indent), "size_t ", RestLen, ";\n"],
-	Code1 = [indent(Indent), RestLen, " = ", Len, " - ", CheckLen, ";\n"],
-	{CheckOffset, State2} = new_tmpvar(State1, "_check_offset"),
+	Code1 = [indent(Indent), RestLen, " = ", Len, " - (", CheckLen, ");\n"],
+	{CheckOffset, State2} = new_tmpvar(State1, "_fixed_offset"),
 	Decl2 = [indent(Indent), "size_t ", CheckOffset, ";\n"],
 	Code2 = [indent(Indent), CheckOffset, " = ", Offset, " + ", RestLen, ";\n"],
 	{[Decl1, Decl2],
@@ -378,7 +390,7 @@ split_subject(Subject = #subject{offset=Offset, length=Len},
 %% Helper for pattern matching.
 -spec c_equality_check(CheckVar::string(), #subject{}, #state{}) -> iolist().
 c_equality_check(CheckVar,
-                 #subject{value=Value, offset=none, length=none,
+                 Subj=#subject{value=Value, offset=none, length=none,
                           faillabel=FailLabel},
                  #state{indent=Indent}) ->
 	[indent(Indent), "if (!lsr_equals(", CheckVar, ", ", Value, ")) ",
@@ -542,22 +554,17 @@ c(#expr{body = #array{length = Length, elems = Elems}, type = array},
 	 RetVar, State4};
 
 % Variable access
-c(#expr{body = #var{name = Name, action = AccessType}, type = boolean},
-  State = #state{indent = Indent}) ->
-	% reference counted
-	Code = case AccessType of
-		lastaccess -> [indent(Indent),
-		               "/* last access of boolean '", Name, "' */\n"];
-		access     -> []
-	end,
-	{[], Code, Name, State};
 c(#expr{body = #var{name = Name, action = AccessType}, type = Type},
-  State = #state{indent = Indent})
-			when Type =:= string; Type =:= array; Type =:= any ->
+  State = #state{indent = Indent}) ->
 	Code = case AccessType of
-		lastaccess -> [indent(Indent), "lsr_decref(", Name, ");",
-		               " /* last access */\n"];
-		access     -> []
+		lastaccess ->
+			[indent(Indent),
+			 case Type of
+				boolean -> ["/* last access of boolean ", Name, " */"];
+				_       -> ["lsr_decref(", Name, "); /* last access */"]
+			 end,
+			 "\n"];
+		access -> []
 	end,
 	{[], Code, Name, State};
 
@@ -569,10 +576,6 @@ c(#expr{body = #literal{type = boolean, data = Content}},
 	Decl = [indent(Indent), c_type(boolean), " ", Name,
 	        " = ", c_boolean_literal(Content), ";\n"],
 	{Decl, [], Name, State2};
-	%--------
-	% We may want to use unboxed values, represented directly as a c bool
-	%Ret = c_boolean_literal(Content),
-	%{[], [], Ret, State};
 c(#expr{body = #literal{type = string, data = Content}},
   State = #state{indent=Indent}) ->
 	% create boxed type and a new tmpvar
