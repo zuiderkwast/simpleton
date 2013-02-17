@@ -2,7 +2,8 @@
 %% Most of the functions check and assign annotations to an expression.
 -module(lsrtyper).
 
--export([annotate/1, get_accessed/1, get_type/1, is_subtype_of/2, is_fixed/1]).
+-export([annotate/1, get_accessed/1, rules_get_accessed/1, get_type/1,
+         is_subtype_of/2, is_fixed/1]).
 
 -include("types.hrl").
 
@@ -20,6 +21,10 @@ get_accessed(#expr{accessed = A}) -> A.
 -spec exprs_get_accessed(exprs()) -> lsrvarsets:varset().
 exprs_get_accessed(#cons{accessed = A}) -> A;
 exprs_get_accessed(nil) -> lsrvarsets:new().
+
+-spec rules_get_accessed(rules()) -> lsrvarsets:varset().
+rules_get_accessed(#rulecons{accessed = A}) -> A;
+rules_get_accessed(nil) -> lsrvarsets:new().
 
 -spec is_subtype_of(typename(), typename()) -> boolean().
 is_subtype_of(T, T) -> true;
@@ -238,6 +243,39 @@ t_array_pattern(Cons = #cons{head=Head, tail=Tail}, Scope) ->
 	                  accessed = lsrvarsets:union(A1, A2)},
 	{Cons1, Scope2}.
 
+%% The cases "rules" for the case ... of ... construct
+-spec t_rules(#rulecons{}, SubjectType::typename(), nested_scope()) ->
+	{#rulecons{}, ReturnType::typename(), nested_scope()}.
+t_rules(RuleCons = #rulecons{head = Rule, tail = nil},
+        T, Scope) ->
+	{Rule1 = #rule{pat  = #expr{accessed = A1},
+	               expr = #expr{type = RetType, accessed = A2}},
+	 Scope1} = t_rule(Rule, T, Scope),
+	RuleCons1 = RuleCons#rulecons{head = Rule1,
+	                              accessed = lsrvarsets:union(A1, A2)},
+	{RuleCons1, RetType, Scope1};
+t_rules(RuleCons = #rulecons{head = Rule, tail = Tail = #rulecons{}},
+        T, Scope) ->
+	{Rule1 = #rule{pat  = #expr{accessed = A1},
+	               expr = #expr{type = RuleRetType, accessed = A2}},
+	 Scope1} = t_rule(Rule, T, Scope),
+	{Tail1 = #rulecons{accessed = A3}, TailRetType, Scope2} =
+		t_rules(Tail, T, Scope1),
+	RetType = get_common_supertype(RuleRetType, TailRetType),
+	RuleCons1 = RuleCons#rulecons{head = Rule1,
+	                              tail = Tail1,
+	                              accessed = lsrvarsets:union([A1, A2, A3])},
+	{RuleCons1, RetType, Scope2}.
+
+%% @ A rule on the form PATTERN -> CODE
+-spec t_rule(rule(), SubjectType::typename(), nested_scope()) ->
+	{rule(), ReturnType::typename(), nested_scope()}.
+t_rule(Rule = #rule{pat = Pat, expr = Expr}, T, Scope) ->
+	{Pat1, Scope1} = t_pattern(Pat, T, Scope),
+	{Expr1, Scope2} = t(Expr, Scope1),
+	Rule1 = Rule#rule{pat = Pat1, expr = Expr1},
+	{Rule1, Scope2}.
+
 %% @doc Checks and annotates an expression. Returns the annotated expression
 %% and the possibly modified scope.
 %% Throws an error message (iolist) on type errors.
@@ -286,6 +324,18 @@ t(Expr = #expr{body = If = #'if'{'cond' = E1, 'then' = E2, 'else' = E3},
 	                  type = get_common_supertype(T2, T3),
 	                  accessed = lsrvarsets:union([A1, A2, A3])},
 	{Expr1, Scope3};
+
+t(#expr{body = #'case'{rules = nil}, line = Line}, _) ->
+	throw(iolib:format("Case without cases can never succeed, on line ~p",
+	                   [Line]));
+t(Expr = #expr{body = Case = #'case'{test = Test, rules = Rules = #rulecons{}}},
+  Scope) ->
+  	{Test1 = #expr{type = SubjType, accessed = A1}, Scope1} = t(Test, Scope),
+	{Rules1 = #rulecons{accessed = A2}, RetType, Scope2} =
+		t_rules(Rules, SubjType, Scope1),
+	Case1 = Case#'case'{test = Test1, rules = Rules1},
+	Expr1 = Expr#expr{body = Case1, type = RetType, accessed = lsrvarsets:union(A1, A2)},
+	{Expr1, Scope2};
 
 %% String concatenation
 t(Expr = #expr{body = Strcat = #strcat{left = E1, right = E2}, line = Line},
@@ -396,6 +446,28 @@ exprs_mark_last_access(Cons = #cons{head = Head, tail = Tail, accessed = A},
 		false -> Cons#cons{head = mark_last_access(Head, Name)}
 	end.
 
+-spec rules_mark_last_access(rules(), string()) -> rules().
+rules_mark_last_access(Rs = #rulecons{head = Rule, tail = Tail, accessed = A},
+                       Name) ->
+	%% Asserting that we're not trying to mark in a bad branch
+	true = lsrvarsets:is_element(Name, A),
+	Rule1 = rule_mark_last_access(Rule, Name),
+	Tail1 = case lsrvarsets:is_element(Name, rules_get_accessed(Tail)) of
+		true  -> rules_mark_last_access(Tail, Name);
+		false -> Tail
+	end,
+	Rs#rulecons{head = Rule1, tail = Tail1}.
+
+-spec rule_mark_last_access(rule(), string()) -> rules().
+rule_mark_last_access(R = #rule{pat = Pat, expr = Expr}, Name) ->
+	InExpr = lsrvarsets:is_element(Name, get_accessed(Expr)),
+	InPat  = lsrvarsets:is_element(Name, get_accessed(Pat)),
+	if
+		InExpr -> R#rule{expr = mark_last_access(Expr, Name)};
+		InPat  -> R#rule{pat  = mark_last_access(Expr, Name)};
+		true   -> R
+	end.
+
 %% @doc Marks the last access of a variable in the expression subtree.
 %% Returns the annotated expression with the last accesses marked.
 %% Throws a message (iolist) if an unused variable is detected.
@@ -456,6 +528,11 @@ mark_last_access(Expr = #expr{body = Body, accessed = A}, Name) ->
 					Body#'if'{'else' = mark_last_access(E3, Name)};
 				true ->
 					Body#'if'{'cond' = mark_last_access(E1, Name)}
+			end;
+		#'case'{test = E, rules = Rs = #rulecons{accessed = A}} ->
+			case lsrvarsets:is_element(Name, A) of
+				true  -> Body#'case'{rules = rules_mark_last_access(Rs, Name)};
+				false -> Body#'case'{test = mark_last_access(E, Name)}
 			end
 	end,
 	Expr#expr{body = Body1}.

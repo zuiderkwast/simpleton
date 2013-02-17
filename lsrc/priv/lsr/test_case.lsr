@@ -1,0 +1,3 @@
+case "foo" of
+	"bar" -> "fail"
+	x     -> x ~ " is not bar"

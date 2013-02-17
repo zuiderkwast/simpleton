@@ -5,7 +5,7 @@ Definitions.
 Rules.
 
 %% Literals. Token on the form {Type, Content}.
-"[^"\\]*"  : {token, {string, TokenChars}}.
+"[^\"\\]*" : {token, {string, TokenChars}}.
 true|false : {token, {boolean, list_to_atom(TokenChars)}}.
 
 %% Keywords. Token on the form atom().

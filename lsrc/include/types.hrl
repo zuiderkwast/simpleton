@@ -24,14 +24,15 @@
 %% exprs, the comma-separated contents of an array [ ... ]
 -record(cons, {head               :: expr(),
                tail               :: exprs(),
+               type     = unknown :: typename() | unknown, % not used yet
                accessed = unknown :: lsrvarsets:varset()}).
 -type exprs() :: #cons{} | nil.
 
 %% Case rules on the from Pattern -> Expression
--record(ruleset, {length :: integer(), rules :: rules()}).
 -record(rule, {pat :: expr(), expr :: expr()}).
 -record(rulecons, {head               :: rule(),
                    tail               :: rules(),
+                   type     = unknown :: typename() | unknown, % not used yet
                    accessed = unknown :: lsrvarsets:varset()}).
 -type rule() :: #rule{}.
 -type rules() :: #rulecons{} | nil.

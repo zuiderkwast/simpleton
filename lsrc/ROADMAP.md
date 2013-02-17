@@ -64,6 +64,6 @@ Unordered:
 * String-patterns (regex) with variable binding: `/(?<varname>pattern)/`
 * Indentation-aware lexer [DONE]
 * Guards
-* Case [PARTIAL]
+* Case [DONE]
 * Try [in | of] catch finally
 

@@ -390,7 +390,7 @@ split_subject(Subject = #subject{offset=Offset, length=Len},
 %% Helper for pattern matching.
 -spec c_equality_check(CheckVar::string(), #subject{}, #state{}) -> iolist().
 c_equality_check(CheckVar,
-                 Subj=#subject{value=Value, offset=none, length=none,
+                 #subject{value=Value, offset=none, length=none,
                           faillabel=FailLabel},
                  #state{indent=Indent}) ->
 	[indent(Indent), "if (!lsr_equals(", CheckVar, ", ", Value, ")) ",
@@ -426,6 +426,64 @@ c_length_helper(LenFunName, Value, State = #state{indent = Indent}) ->
 	Decl = [indent(Indent), "size_t ", Var, ";\n"],
 	Code = [indent(Indent), Var, " = ", LenFunName, "(", Value, ");\n"],
 	{Decl, Code, Var, State1}.
+
+c_rules(nil, #subject{value = Value},
+        _RetVar, AfterLabel,
+        State = #state{indent = Indent}) ->
+	Code = [indent(Indent),
+	        "lsr_error(\"No case matches value (", Value, ")\");\n",
+	        indent(Indent - 1), AfterLabel, ":\n"],
+	{[],	 Code, State};
+c_rules(#rulecons{head = #rule{pat = Pattern, expr = Body}, tail = Tail},
+        Subject = #subject{},
+        RetVar, AfterLabel,
+        State = #state{indent = Indent}) ->
+	{NextLabel, State1} = new_label(State, "next_case"),
+	Subject1 = Subject#subject{faillabel = NextLabel},
+	{MatchDecl, MatchCode,
+	 BindDecl, BindCode, State2} = c_match(Pattern, Subject1, State1),
+	%% Free vars not used anymore if this cases matches
+	VarsUnusedInBody = lsrvarsets:subtract(lsrtyper:rules_get_accessed(Tail),
+	                                       lsrtyper:get_accessed(Body)),
+	DiscardCode = discard_vars(VarsUnusedInBody, Indent + 1),
+	{BodyDecl, BodyCode, BodyRetVar, State3} = c(Body, indent_more(State2)),
+	BodyCode2 =
+		[indent(Indent), "{ /* case matched */\n",
+		 indent(Indent + 1), "/* case tmp vars */\n", BodyDecl,
+		 indent(Indent + 1), "/* discard vars not used in this branch */\n", DiscardCode,
+		 indent(Indent + 1), "/* case code */\n", BodyCode,
+		 indent(Indent + 1), RetVar, " = ", BodyRetVar, ";\n",
+		 indent(Indent), "}\n"],
+	State4 = indent_less(State3),
+	{AfterDecl, AfterCode, State6} = case MatchCode of
+		[] ->
+			%% No match code means this case always matches. Skip the rest of the cases.
+			%% This is an optimization only.
+			{[],
+			 [indent(Indent), "/* the previous cases always matches, so no more cases here. */\n"],
+			 State4};
+		_ ->
+			%% Discard vars used only in the pattern and expr that didn't match
+			VarsUsusedAfterCase =
+				lsrvarsets:subtract(lsrvarsets:union(lsrtyper:get_accessed(Body),
+				                                     lsrtyper:get_accessed(Pattern)),
+				                    lsrtyper:rules_get_accessed(Tail)),
+			DiscardOnMismatchCode = discard_vars(VarsUsusedAfterCase, Indent),
+			%% Recursively handle the rest of the cases
+			{TailDecl, TailCode, State5} = c_rules(Tail, Subject, RetVar, AfterLabel, State4),
+			{TailDecl,
+			 [indent(Indent), "goto ", AfterLabel, ";\n",
+			  indent(Indent - 1), NextLabel, ":\n",
+			  indent(Indent), "/* discard vars used only in the previous case */\n",
+			  DiscardOnMismatchCode,
+			  TailCode],
+			 State5}
+	end,
+	{[MatchDecl, BindDecl, AfterDecl],
+	 [indent(Indent), "/* case pattern test */\n", MatchCode,
+	  indent(Indent), "/* case matched; bind vars in pattern */\n", BindCode,
+	  BodyCode2, AfterCode],
+	 State6}.
 
 
 -spec c(#expr{}, #state{}) -> {iolist(), iolist(), iolist(), #state{}}.
@@ -465,6 +523,27 @@ c(#expr{body = #'if'{'cond' = E1 = #expr{type = T1},
 	        indent(Indent), "}\n"
 	       ],
 	{Decl, Code, RetVar, State5};
+
+c(#expr{body = #'case'{test = Subj = #expr{type = SubjType}, rules = Rules},
+        type = RetType},
+  State = #state{indent = Indent}) ->
+	{Decl1, Code1, SubjVar, State1} = c(Subj, State),
+	Subject = #subject{value = SubjVar,
+	                   type = SubjType},
+	{AfterLabel, State2} = new_label(State1, "_after_case"),
+	{RetVar, State3} = new_tmpvar(State2, "_case_result"),
+	RetDecl = decl(RetVar, RetType, Indent),
+	{Decl2, Code2, State4} = c_rules(Rules, Subject,
+	                                 RetVar, AfterLabel, State3),
+	Code3 = [indent(Indent - 1), AfterLabel, ":\n"],
+	{[Decl1, RetDecl, Decl2],
+	 [indent(Indent), "/* case subject (", SubjVar, ") */\n",
+	  Code1,
+	  indent(Indent), "/* case ", SubjVar, " of ... */\n",
+	  Code2,
+	  Code3],
+	 RetVar,
+	 State4};
 
 % Sequence: Discard the first value and continue. Keep only the last value. 
 c(#expr{body = #binop{op = seq, left = E1, right = E2}},
@@ -526,10 +605,10 @@ c(#expr{body = #assign{pat = Pattern, expr = Expr}, type = ExprType},
 			[];
 		_ ->
 			[indent(Indent), "goto ", SuccessLabel, ";\n",
-			 indent(Indent), FailLabel, ":\n",
+			 indent(Indent - 1), FailLabel, ":\n",
 			 indent(Indent),
 			 "lsr_error(\"Pattern mismatch (", ExprVar, ")\");\n",
-			 indent(Indent), SuccessLabel, ":\n"]
+			 indent(Indent - 1), SuccessLabel, ":\n"]
 	end,
 	{[ExprDecl, MatchDecl, BindDecl],
 	 [ExprCode, MatchCode, SuccessCode, BindCode],
@@ -635,7 +714,7 @@ c_boolean_literal(Content) ->
 c_string_literal(Content) ->
 	["lsr_string_literal(", Content, ")"].
 
-% declare and initialize
+% declare
 -spec decl(string(), typename(), integer()) -> iolist().
 decl(Name, Type, Indent) ->
 	[indent(Indent), c_type(Type), " ", Name, ";",

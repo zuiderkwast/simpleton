@@ -59,13 +59,12 @@ expr -> if expr
                                        'else' = '$9'},
                             mkexpr(If, Pos).
 
-% Case TEST of RULES
+% case TEST of RULES
 expr -> 'case' expr 'of'
         '(' rules ')'     : {'case', Pos} = '$1',
                             mkexpr(#'case'{test = '$2', rules = '$5'}, Pos).
-rules -> rule             : {#rulecons{head = '$1', tail = nil}, 1}.
-rules -> rule ';' rules   : {Tail, TailLen} = '$3',
-                            {#rulecons{head = '$1', tail = Tail}, 1 + TailLen}.
+rules -> rule             : #rulecons{head = '$1', tail = nil}.
+rules -> rule ';' rules   : #rulecons{head = '$1', tail = '$3'}.
 rule -> expr '->' expr    : % {'->', Pos} = '$2',
                             #rule{pat = '$1', expr = '$3'}.
 
