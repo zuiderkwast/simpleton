@@ -1,18 +1,12 @@
-Simpleton: A simple programming language
-========================================
+Simpleton: A functional programming language without linked lists
+=================================================================
 
-Simpleton is a functional programming language that relies heavily on in-place
-update optimizations in an attempt to combine the following:
+Simpleton is a functional programming language with immutable values and with
+immutable hashtables, arrays and strings as primitive data structures.
 
-* Immutable values, single assignment variables.
-* Hash tables, arrays and strings as primitive data structures.  Forget about
-  linked lists.
-
-Immutable hash tables and arrays are not the most practical data structurs,
-since a new copy has to be created for every little change.  However, with code
-analysis, it is possible to detect the last access of every variable.  This,
-combined with reference counted objects, makes way for massive in-place update
-optimizations.
+The implementation relies heavily on in-place update optimizations. With code
+analysis combined with reference counted values, it is possible to detect the
+last access of every value.
 
 The project
 -----------
@@ -68,18 +62,21 @@ Syntax
 
 The constructs so far:
 
-* `expr1 ; expr2` - Evalueate `expr1` and discard the result.  Then evaluate
-  `expr2`.  The result is that of `expr2`.
+* `do { expr1 ; expr2 ; ... ; exprn }` - Evaluate `expr1` and discard the
+  result.  Then evaluate `expr2` and so on.  The result is that of the last
+  expression, `exprn`.  The scope of variables bound in these expressions (e.g.
+  as `a = b`) is the rest of the do block.
 * `expr1 ~ expr2` - String concatenation.
 * `expr1 @ expr2` - Array concatenation.
 * `if expr1 then expr2 else expr3` - Functional, like the `? :` construct in C.
-* `pattend = expression` - Match an expression agains a patten an bind the free
+* `pattern = expression` - Match an expression agains a patten an bind the free
   variables in pattern.  Raises an exception if the matching fails.
+* `case expr of { pattern1 -> expr1 ; pattern2 -> expr2 ; ... }` - Case with
+  pattern matching.
 
-An idea is to avoid `[]` and `{}` in the control flow, since these are used in
-the data.  Overloading these may confuse things.  It is tempting to avoid
-semicolons and braces using an _off-side rule_, i.e. indentation instead of
-braces, as in Python and Haskell.
+The braces and semicolons may be omitted after `do` and `of` if the correct
+indentation is used.  This layout rule (or “off-side rule”) is very similar to
+that in Haskell.
 
 Ideas for more syntax:
 
