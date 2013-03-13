@@ -1,13 +1,13 @@
 Terminals
 boolean string
-'~' '=' ident ';' '(' ')'
+'~' '=' ident ';' '(' ')' '{' '}'
 '[' ']' '@' ','
 'if' then else
-case of '->'.
+case of '->' do.
 
 Nonterminals
 var expr prog literal
-assign seqexpr prefix postfix primary_expr exprs
+prefix postfix primary_expr exprs exprseq
 rule rules.
 
 Rootsymbol prog.
@@ -18,8 +18,8 @@ Right 20 else.
 Right 30 '='.
 Left  60 '~' '@'.
 
-%% Program :: #prog{}
-prog -> expr              : #prog{body='$1'}.
+%% Program :: #prog{} (assume an implicit do {...} around the whole program)
+prog -> '{' exprseq '}'   : #prog{body='$2'}.
 
 %% Expressions :: #expr{}
 expr -> prefix            : '$1'.
@@ -42,26 +42,26 @@ expr -> expr '~' expr     : {'~', Pos} = '$2',
 expr -> expr '@' expr     : {'@', Pos} = '$2',
                             mkexpr(#arrcat{left = '$1', right = '$3'}, Pos).
 
-% Seq as a binary op
-expr -> seqexpr ';' expr  : mkbinop(seq, '$1', '$3', '$2').
+% do { ... } sequence, represented as a binary tree with 'seq' as the operator
+expr -> do '{' exprseq '}'  : '$3'.
+exprseq -> expr             : '$1'.
+exprseq -> expr ';' exprseq : mkbinop(seq, '$1', '$3', '$2').
 
-% Assignment (like let-in, always followed by an expr)
-assign -> expr '=' expr   : {'=', Pos} = '$2',
-                            mkexpr(#assign{pat = '$1', expr = '$3'}, Pos).
-seqexpr -> assign         : '$1'.
-seqexpr -> expr           : '$1'.
+% Assignment/matching
+expr -> expr '=' expr     : {'=', Pos} = '$2',
+                             mkexpr(#assign{pat = '$1', expr = '$3'}, Pos).
 
 expr -> if expr
-        then '(' expr ')'
-        else '(' expr ')' : {'if', Pos} = '$1',
+        then expr
+        else expr         : {'if', Pos} = '$1',
                             If = #'if'{'cond' = '$2',
-                                       'then' = '$5',
-                                       'else' = '$9'},
+                                       'then' = '$4',
+                                       'else' = '$6'},
                             mkexpr(If, Pos).
 
 % case TEST of RULES
 expr -> 'case' expr 'of'
-        '(' rules ')'     : {'case', Pos} = '$1',
+        '{' rules '}'     : {'case', Pos} = '$1',
                             mkexpr(#'case'{test = '$2', rules = '$5'}, Pos).
 rules -> rule             : #rulecons{head = '$1', tail = nil}.
 rules -> rule ';' rules   : #rulecons{head = '$1', tail = '$3'}.

@@ -9,7 +9,7 @@ Rules.
 true|false : {token, {boolean, list_to_atom(TokenChars)}}.
 
 %% Keywords. Token on the form atom().
-if|then|else|case|of : {token, list_to_atom(TokenChars)}.
+if|then|else|case|of|do : {token, list_to_atom(TokenChars)}.
 
 %% Indentifiers. Token on the form {ident, string()}.
 [a-zA-Z_][a-zA-Z0-9_]* : {token, {ident, TokenChars}}.
@@ -26,6 +26,8 @@ if|then|else|case|of : {token, list_to_atom(TokenChars)}.
 
 \[      : {token, '['}.
 \]      : {token, ']'}.
+\}      : {token, '}'}.
+\{      : {token, '{'}.
 ,       : {token, ','}.
 ->      : {token, '->'}.
 
@@ -127,10 +129,10 @@ process_layout([Token | Tokens],
 	{Line, Col} = get_line_col(Token),
 	{TokensBefore, IndentStack1} = tokens_before(Line, Col, IndentStack),
 	%% begin and push indent to stack
-	IsExplicitBegin = case Token of {'(', _} -> true; _ -> false end,
+	IsExplicitBegin = case Token of {'{', _} -> true; _ -> false end,
 	{TokenBlockBegin, IndentStack2} =
 		case IsStartOfBlock and not IsExplicitBegin of
-			true  -> {[{'(', {Line, Col}}], [Col|IndentStack1]};
+			true  -> {[{'{', {Line, Col}}], [Col|IndentStack1]};
 			false -> {[], IndentStack1}
 		end,
 	NextIsStartOfBlock = case Token of
@@ -147,15 +149,14 @@ tokens_before(Line, Col, IndentStack=[Indent|Tail]) ->
 	if
 		Col < Indent ->
 			{Tokens, IndentStack1} = tokens_before(Line, Col, Tail),
-			{Tokens ++ [{')', {Line, Col}}], IndentStack1};
+			{Tokens ++ [{'}', {Line, Col}}], IndentStack1};
 		Col == Indent ->
 			{[{';', {Line, Col}}], IndentStack};
 		Col > Indent ->
 			{[], IndentStack}
 	end.
 
-keyword_starts_offside_block(X) when X =:= 'of'; X =:= '->';
-                                     X =:= 'then'; X =:= 'else' ->
+keyword_starts_offside_block(X) when X =:= 'of'; X =:= 'do' ->
 	true;
 keyword_starts_offside_block(_) ->
 	false.
