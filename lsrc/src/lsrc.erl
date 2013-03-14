@@ -158,7 +158,7 @@ c_match(#expr{body = #array{length = Length, elems = Elems}, type = array},
 	TypeCheck = case ValueType of
 		array -> [];
 		_     -> [indent(Indent),
-		          "if (lsr_type(", Value, ") != LSR_ARRAY)",
+		          "if (!lsr_is_array(", Value, "))",
 		          " goto ", FailLabel, ";\n"]
 	end,
 	LenCheck = [indent(Indent),
@@ -246,7 +246,7 @@ c_match(Expr = #expr{body = #arrcat{}, type = array},
 	TypeCheck = case ValueType of
 		array -> [];
 		_      -> [indent(Indent),
-		           "if (lsr_type(", Value, ") != LSR_ARRAY)"
+		           "if (!lsr_is_array(", Value, "))"
 		           " goto ", FailLabel, ";\n"]
 	end,
 	{LenDecl, LenCode, LenVar, State1} = c_arrlen(Value, State),
@@ -311,7 +311,7 @@ c_array_length(#expr{body = #var{name = Name, action = A}, type = Type},
 	Code = case Type of
 		array -> [];
 		_     -> [indent(Indent),
-		          "if (lsr_type(", Name, " != LSR_ARRAY)"
+		          "if (!lsr_is_array(", Name, "))"
 		          " goto ", FailLabel, ";\n"]
 	end,
 	{Code, ["lsr_array_len(", Name, ")"]};
@@ -352,7 +352,6 @@ c_match_array_elems(#cons{head=HeadPat, tail=TailPat},
 	 [BindDecl | BindDecls],
 	 [BindCode | BindCodes],
 	 State3}.
-
 
 %% Split a pattern subject into a check part and a match part.
 -spec split_subject(#subject{}, left | right, string(), #state{}) ->
@@ -583,6 +582,29 @@ c(#expr{body = #strcat{left  = Left  = #expr{type = TL},
 	{RetVar, State4} = new_tmpvar(State3, "_strcat"),
 	ConcatCode = [indent(Indent), RetVar, " = lsr_string_concat(", LeftVar, ", ", RightVar, ");\n"],
 	{[LeftDecl, RightDecl, decl(RetVar, string, Indent)],
+	 [LeftCode, AssertLeft, RightCode, AssertRight, ConcatCode],
+	 RetVar,
+	 State4};
+
+c(#expr{body = #arrcat{left  = Left  = #expr{type = TL},
+                       right = Right = #expr{type = TR},
+                       fixed = true}},
+  State = #state{indent = Indent}) ->
+	{LeftDecl, LeftCode, LeftVar, State2} = c(Left, State),
+	%% If it's not infered to be an array, add a runtime assertion
+	AssertLeft = case TL of
+		array -> [];
+		_     -> [indent(Indent), "lsr_assert_array(", LeftVar, ");\n"]
+	end,	
+	{RightDecl, RightCode, RightVar, State3} = c(Right, State2),
+	AssertRight = case TR of
+		array -> [];
+		_     -> [indent(Indent), "lsr_assert_array(", RightVar, ");\n"]
+	end,
+	{RetVar, State4} = new_tmpvar(State3, "_arrcat"),
+	ConcatCode = [indent(Indent), RetVar, " = lsr_array_concat(", LeftVar,
+	              ", ", RightVar, ");\n"],
+	{[LeftDecl, RightDecl, decl(RetVar, array, Indent)],
 	 [LeftCode, AssertLeft, RightCode, AssertRight, ConcatCode],
 	 RetVar,
 	 State4};

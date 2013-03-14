@@ -1,5 +1,10 @@
 /*
  * array.h: Array implemented as an aadeque.
+ *
+ * All functions except lsr_is_array() and lsr_assert_array() assume that their
+ * argument of type (lsr_t *) can be safely cast to (aadeque_t *). The value of
+ * type (lsr_t *) returned by any of these functions can be safely cast to
+ * (aadeque_t *).
  */
 
 #define AADEQUE_HEADER LSR_HEADER;
@@ -8,6 +13,15 @@
 #define AADEQUE_FREE(ptr, size) lsr_free(ptr, size)
 #define AADEQUE_MIN_CAPACITY 4
 #include "aadeque.h"
+
+static inline bool lsr_is_array(lsr_t *ptr) {
+	return !lsr_is_masked(ptr) && ptr->type == LSR_ARRAY;
+}
+
+static inline void lsr_assert_array(lsr_t *ptr) {
+	if (!lsr_is_array(ptr))
+		lsr_error("Array expected.");
+}
 
 /*
  * Creates an array with n undefined values
@@ -59,6 +73,36 @@ static inline lsr_t *lsr_array_slice(lsr_t *array,
 		return (lsr_t *)a;
 	}
 	return (lsr_t *)aadeque_slice(a, off, len);
+}
+
+/*
+ * Concatenares two arrays. Reuses one of them if possible, prefering the longest.
+ */
+static inline lsr_t *lsr_array_concat(lsr_t *a, lsr_t *b) {
+	if (a->refc == 0 && (b->refc != 0 || lsr_array_len(a) >= lsr_array_len(b))) {
+		/* reuse a, append b. (b is not reusable or b is shorter than a.) */
+		a = (lsr_t *)aadeque_append((aadeque_t *)a, (aadeque_t *)b);
+		if (b->refc == 0)
+			lsr_array_free(b);
+		return a;
+	} else if (b->refc == 0) {
+		/* reuse b. prepend a to b. */
+		b = (lsr_t *)aadeque_prepend((aadeque_t *)b, (aadeque_t *)a);
+		if (a->refc == 0)
+			lsr_array_free(a);
+		return b;
+	} else {
+		/* must copy */
+		unsigned int i,
+		             len_a = lsr_array_len(a),
+		             len_b = lsr_array_len(b);
+		aadeque_t *c = aadeque_create(len_a + len_b);
+		for (i = 0; i < len_a; i++)
+			aadeque_set(c, i, aadeque_get((aadeque_t *)a, i));
+		for (i = 0; i < len_b; i++)
+			aadeque_set(c, i + len_a, aadeque_get((aadeque_t *)b, i));
+		return (lsr_t *)c;
+	}
 }
 
 /*

@@ -87,7 +87,7 @@ static inline void lsr_free(void * ptr, size_t size) {
  * significant bits.
  */
 static inline bool lsr_is_masked(lsr_t *ptr) {
-	return (size_t)ptr & 3;
+	return (bool)((size_t)ptr & 3);
 }
 
 /*----------------------------------------------------------------------
