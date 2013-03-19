@@ -20,6 +20,8 @@
 -record(assign,  {pat :: expr(), expr :: expr()}).
 -record('if',    {'cond' :: expr(), 'then' :: expr(), 'else' :: expr()}).
 -record('case',  {test :: expr(), rules :: rules()}).
+-record(do,      {expr             :: expr(),
+                  locals = unknown :: scope() | unknown}).
 
 %% exprs, the comma-separated contents of an array [ ... ]
 -record(cons, {head               :: expr(),
@@ -38,7 +40,7 @@
 -type rules() :: #rulecons{} | nil.
 
 -type exprbody() :: #var{} | #literal{} | #strcat{} | #arrcat{} | #binop{} |
-                    #assign{} | #'if'{} | #'case'{} | #array{}.
+                    #assign{} | #'if'{} | #'case'{} | #array{} | #do{}.
 
 -record(expr, {body               :: exprbody(),
                line               :: integer(),
@@ -47,8 +49,17 @@
 
 -type expr() :: #expr{}.
 
-%% @doc Annotated program tree
+%% @doc Annotated program tree (old)
 -record(prog, {body               :: expr(),
                type     = unknown :: typename() | unknown,
                locals   = unknown :: scope() | unknown,
                accessed = unknown :: lsrvarsets:varset() | unknown}).
+
+%-record(lambda, {params             :: exprs(), % patterns
+%                 body               :: expr(),
+%                 type     = unknown :: scope() | unknown,
+%                 accessed = unknown :: lsrvarsets:varset() | unknown}).
+%
+%-record(module, {funs :: [#fun{}]}).
+%-record('fun', {name :: string(), clauses :: [#lambda{}]}).
+

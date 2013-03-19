@@ -91,26 +91,15 @@ is_fixed(#expr{body = #strcat{fixed=Fixed}}) -> Fixed;
 is_fixed(#expr{body = #arrcat{fixed=Fixed}}) -> Fixed.
 
 %% @doc Annotates an abstract syntax tree.
--spec annotate(#prog{}) -> {ok, #prog{}}
+-spec annotate(expr()) -> {ok, expr()}
                         | {error, {lsrtyper, Message::iolist()}}.
 annotate(Tree) ->
 	NestedScope = [],
-	try check_prog(Tree, NestedScope) of
+	try t(Tree, NestedScope) of
 		{AnnotatedTree, _ModifiedScope} -> {ok, AnnotatedTree}
 	catch
 		throw:Message -> {error, {lsrtyper, Message}}
 	end.
-
-%% @doc Prog (root symbol). A new scope.
--spec check_prog(#prog{}, nested_scope()) -> {#prog{}, nested_scope()}.
-check_prog(Prog = #prog{body = E}, Scope) ->
-	InnerScope = [[] | Scope],
-	{E1, [LocalVars | Scope3]} = t(E, InnerScope),
-	E2 = #expr{type = Type, accessed = A} = mark_last_accesses(E1, LocalVars),
-	A2 = lsrvarsets:subtract(A, scope_to_varset(LocalVars)),
-	AnnotatedProg = Prog#prog{body = E2, type = Type, locals = LocalVars,
-	                          accessed = A2},
-	{AnnotatedProg, Scope3}.
 
 %% @doc Checks and type-matches a pattern against a type
 -spec t_pattern(expr(), typename(), nested_scope()) -> {expr(), nested_scope()}.
@@ -280,6 +269,17 @@ t_rule(Rule = #rule{pat = Pat, expr = Expr}, T, Scope) ->
 %% and the possibly modified scope.
 %% Throws an error message (iolist) on type errors.
 -spec t(expr(), nested_scope()) -> {expr(), nested_scope()}.
+
+%% Do block. A new scope.
+t(Expr = #expr{body = #do{expr = E}}, Scope) ->
+	InnerScope = [[] | Scope],
+	{E1, [LocalVars | Scope1]} = t(E, InnerScope),
+	E2 = #expr{type = Type, accessed = A} = mark_last_accesses(E1, LocalVars),
+	A2 = lsrvarsets:subtract(A, scope_to_varset(LocalVars)),
+	Expr1 = Expr#expr{body = #do{expr = E2, locals = LocalVars},
+	                  type = Type,
+	                  accessed = A2},
+	{Expr1, Scope1};
 
 %% Sequence: Eval E1 and thow away value, then eval E2.
 t(Expr = #expr{body = Binop = #binop{op=seq, left=E1, right=E2}}, Scope) ->
@@ -514,6 +514,8 @@ mark_last_access(Expr = #expr{body = Body, accessed = A}, Name) ->
 				true  -> Body#assign{pat = mark_last_access(P, Name)};
 				false -> Body#assign{expr = mark_last_access(E, Name)}
 			end;
+		#do{expr = E} ->
+			Body#do{expr = mark_last_access(E, Name)};
 		#'if'{'cond'=E1, 'then'=E2, 'else'=E3} ->
 			%% Accessed ok. In 'then', in 'else' or only in the condition?
 			InThen = lsrvarsets:is_element(Name, get_accessed(E2)),

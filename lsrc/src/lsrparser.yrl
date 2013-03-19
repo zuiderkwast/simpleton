@@ -18,8 +18,17 @@ Right 20 else.
 Right 30 '='.
 Left  60 '~' '@'.
 
-%% Program :: #prog{} (assume an implicit do {...} around the whole program)
-prog -> '{' exprseq '}'   : #prog{body='$2'}.
+%% Program :: expr() (implicit do {...} around the whole program)
+prog -> '{' exprseq '}'   : {_, Pos} = '$1',
+                            mkexpr(#do{expr = '$2'}, Pos).
+
+%% Future plan:
+% Rootsymbol module.
+% module -> '{' defs '}'.
+% defs -> .
+% defs -> def defs.
+% def -> fundef.
+% fundef -> ident '(' exprs ')' '=' expr.
 
 %% Expressions :: #expr{}
 expr -> prefix            : '$1'.
@@ -42,8 +51,9 @@ expr -> expr '~' expr     : {'~', Pos} = '$2',
 expr -> expr '@' expr     : {'@', Pos} = '$2',
                             mkexpr(#arrcat{left = '$1', right = '$3'}, Pos).
 
-% do { ... } sequence, represented as a binary tree with 'seq' as the operator
-expr -> do '{' exprseq '}'  : '$3'.
+% do { ... } sequence
+expr -> do '{' exprseq '}'  : {do, Pos} = '$1',
+                              mkexpr(#do{expr = '$3'}, Pos).
 exprseq -> expr             : '$1'.
 exprseq -> expr ';' exprseq : mkbinop(seq, '$1', '$3', '$2').
 

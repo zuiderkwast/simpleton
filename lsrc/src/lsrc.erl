@@ -21,20 +21,11 @@ compile(Src) ->
 compile(String, Verbose) ->
 	try
 		{ok, Tokens} = lsrlexer:tokenize(String),
-		case Verbose of
-			true  -> io:format("Tokens:~n~p~n", [Tokens]);
-			false -> ok
-		end,
+		Verbose andalso io:format("Tokens:~n~p~n", [Tokens]),
 		{ok, Tree} = lsrparser:parse(Tokens),
-		case Verbose of
-			true  -> io:format("Tree:~n~p~n", [Tree]);
-			false -> ok
-		end,
+		Verbose andalso io:format("Tree:~n~p~n", [Tree]),
 		{ok, Annotated} = lsrtyper:annotate(Tree),
-		case Verbose of
-			true  -> io:format("Annotated tree:~n~p~n", [Annotated]);
-			false -> ok
-		end,
+		Verbose andalso io:format("Annotated tree:~n~p~n", [Annotated]),
 		{ok, c_prog(Annotated, Verbose)}
 	catch
 		error:{badmatch, {error, Error}} ->
@@ -50,12 +41,11 @@ compile(String, Verbose) ->
 			{error, Message1}
 	end.
 
-c_prog(#prog{body=E, type=Type, locals=Vars, accessed=_OuterVars=[]},
+c_prog(Expr = #expr{type = Type, accessed = _OuterVars = []},
        MemDebug) ->
 	State = #state{},
-	State1 = indent_more(State),
-	#state{indent = Indent} = State1,
-	{Decl, Code, RetVar, _State2} = c(E, State1),
+	State1 = #state{indent = Indent} = indent_more(State),
+	{Decl, Code, RetVar, _State2} = c(Expr, State1),
 	Output =
 	[case MemDebug of
 		true -> "#define LSR_MONITOR_ALLOC\n";
@@ -63,9 +53,6 @@ c_prog(#prog{body=E, type=Type, locals=Vars, accessed=_OuterVars=[]},
 	 end,
 	 "#include \"runtime/runtime.h\"\n",
 	 "int main() {\n",
-	 "\n",
-	 indent(Indent), "/* local vars */\n",
-	 c_vardecls(Vars, Indent),
 	 "\n",
 	 indent(Indent), "/* temporary vars */\n",
 	 Decl,
@@ -486,6 +473,29 @@ c_rules(#rulecons{head = #rule{pat = Pattern, expr = Body}, tail = Tail},
 
 
 -spec c(#expr{}, #state{}) -> {iolist(), iolist(), iolist(), #state{}}.
+
+c(#expr{body = #do{expr = E, locals = Vars}, type = Type},
+  State = #state{indent = Indent0}) ->
+	{RetVar, State1} = new_tmpvar(State, "_do"),
+	DoDecl = decl(RetVar, Type, Indent0),
+	State2 = #state{indent = Indent} = indent_more(State1),
+	{Decl, Code, RetVar1, State3} = c(E, State2),
+	DoCode =
+	[indent(Indent0), "{ /* do */\n",
+	 "\n",
+	 indent(Indent), "/* local vars */\n",
+	 c_vardecls(Vars, Indent),
+	 "\n",
+	 indent(Indent), "/* temporary vars */\n",
+	 Decl,
+	 "\n",
+	 indent(Indent), "/* code */\n",
+	 Code,
+	 "\n",
+	 indent(Indent), RetVar, " = ", RetVar1, ";\n",
+	 indent(Indent0), "}\n"],
+	{DoDecl, DoCode, RetVar, State3};
+
 c(#expr{body = #'if'{'cond' = E1 = #expr{type = T1},
                      'then' = E2 = #expr{accessed = A2},
                      'else' = E3 = #expr{accessed = A3}},
