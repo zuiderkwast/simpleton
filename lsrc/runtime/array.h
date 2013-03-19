@@ -32,6 +32,10 @@ static inline lsr_t *lsr_array_create(unsigned int n) {
 	return a;
 }
 
+/*
+ * Frees the array itself. Does not free or decrement reference counters of
+ * the contents.
+ */
 static inline void lsr_array_free(lsr_t *array) {
 	aadeque_destroy((aadeque_t *)array);
 }
@@ -58,7 +62,10 @@ static inline void lsr_array_set(lsr_t *array, unsigned int i, lsr_t *value) {
 	aadeque_set((aadeque_t *)array, i, value);
 }
 
-/* Returns a slice of an array. Reuses the array if possible. */
+/*
+ * Returns a slice of an array. Reuses the array if possible.
+ * FIXME increment reference counters on copy, decrement/free on crop
+ */
 static inline lsr_t *lsr_array_slice(lsr_t *array,
                                      size_t offset,
                                      size_t length) {
@@ -77,6 +84,7 @@ static inline lsr_t *lsr_array_slice(lsr_t *array,
 
 /*
  * Concatenares two arrays. Reuses one of them if possible, prefering the longest.
+ * FIXME increment reference counters on copy
  */
 static inline lsr_t *lsr_array_concat(lsr_t *a, lsr_t *b) {
 	if (a->refc == 0 && (b->refc != 0 || lsr_array_len(a) >= lsr_array_len(b))) {
