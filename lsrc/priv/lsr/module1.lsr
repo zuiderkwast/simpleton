@@ -1,0 +1,12 @@
+main(_args) = do
+	x = "What" ~ " is"  # Bind free var x
+	x = "What is"       # Match bound var x
+	"What is" = x       # Match a literal
+	"What " ~ "is" = x  # Match with concat in pattern
+	y = " the"
+	z = x ~ y ~ " Gigashadow?" # Concat
+	condition = false
+	w = if (condition)
+		then true
+		else z
+	w

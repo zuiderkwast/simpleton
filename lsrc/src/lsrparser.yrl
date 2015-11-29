@@ -6,11 +6,12 @@ boolean string
 case of '->' do.
 
 Nonterminals
-var expr prog literal
+% prog
+module def defs
+var expr literal
 prefix postfix primary_expr exprs exprseq
 rule rules.
 
-Rootsymbol prog.
 Right 10 ';'.
 Left  15 ','.
 Right 15 '->'.
@@ -18,17 +19,32 @@ Right 20 else.
 Right 30 '='.
 Left  60 '~' '@'.
 
+%% Old style: prog = a list of expr on top level
+% Rootsymbol prog.
 %% Program :: expr() (implicit do {...} around the whole program)
-prog -> '{' exprseq '}'   : {_, Pos} = '$1',
-                            mkexpr(#do{expr = '$2'}, Pos).
+%prog -> '{' exprseq '}'   : {_, Pos} = '$1',
+%                            mkexpr(#do{expr = '$2'}, Pos).
 
 %% Future plan:
-% Rootsymbol module.
-% module -> '{' defs '}'.
-% defs -> .
-% defs -> def defs.
-% def -> fundef.
-% fundef -> ident '(' exprs ')' '=' expr.
+Rootsymbol module.
+module -> '{' defs '}'    : #module{defs = '$2'}.
+defs -> def defs          : {Name, Fun} = '$1',
+                            orddict:update(Name,
+                                           fun(Funs) -> #funcons{head = Fun,
+                                                                 tail = Funs}
+                                           end,
+                                           #funcons{head = Fun},
+                                           '$2').
+defs -> '$empty'          : orddict:new().
+def -> ident '(' exprs ')'
+       '=' expr           : {ident, _Pos, Name} = '$1',
+                            {Params, NumParams} = '$3',
+                            Fun = #'fun'{params = Params,
+                                         numparams = NumParams,
+                                         body = '$6'},
+                            {Name, Fun}.
+                            %Clauses = #funcons{head = Fun},
+                            %#def{name = Name, clauses = Clauses}.
 
 %% Expressions :: #expr{}
 expr -> prefix            : '$1'.

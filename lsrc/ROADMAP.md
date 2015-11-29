@@ -18,7 +18,7 @@ values.
 * Pattern matching with literal or bound variable, compiler [DONE]
 * Matching expression ::= pattern match-operator expression (match or fail)
   [DONE]
-* Sequencing ";" [DONE]
+* Do sequencing `do { expr ; … }` [DONE]
 * Boolean literals [DONE]
 * If-then-else [DONE]
 * Representation of boolean values (masked in a pointer) [DONE]
@@ -51,19 +51,51 @@ Milestone 4: Arrays
 * Add "fixed" annotation on arrays (in patterns) [DONE]
 * Compile patterns containing array concatenation [DONE]
 
-Dicts:
+Milestone 5: Dicts
 
-* Dict literals and basic dict operations: set, lookup, delete
-* Dicts in patterns: `dict{key1: value1, key2: value2, ...}`
+* Dict constructor `{key1: value1, …}` and insert/replace `mydict{key: value, …}`
+* Dicts in patterns: `mydict{key1: value1, key2: value2, …}`
+* Implementation in runtime (a specialized open-address hash table) with tests
+* Some short-hand for fixed name member access, such as `mydict.mykeyname`
+
+Milestone 6: Functions
+
+* Module with function definitions as the root symbol in the grammar
+* Function application (n-arity)
+* BIFs for string IO
+* Main function with argv or "world" object
+* Top level function definitions (mutually recursive, multiple clause, n-ary)
+* Anonymous aka lambda functions (non-recursive, single clause?)
+* First order functions, i.e. type check variables
+
+Milestone 7: Modularization
+
+* Module name
+* Import or access functions in other modules
+* Typecheck calls to functions in other modules
+* Linking with other modules
+* Public and private functions (or exported vs. not exported)
+
+Numbers
+* Integers
+* Floats
+* Polymorphism for numeric types
+
+Regular expressions as string patterns
+
+* Regex syntax in grammar
+* Type-checking
+* Variable binding `/(?<varname>pattern)/` with free and bound variables
+* Runtime, working code
+* Compile regex at compile time
 
 Unordered:
 
-* Function application (1-arity)
-* BIFs for string IO or argv
-* Function def (1-arity)
-* String-patterns (regex) with variable binding: `/(?<varname>pattern)/`
 * Indentation-aware lexer [DONE]
 * Guards
 * Case [DONE]
+
+Exceptions:
+
 * Try [in | of] catch finally
 

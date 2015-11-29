@@ -4,7 +4,9 @@
 
 -include("types.hrl").
 
--record(state, {nexttmp=1, nextlabel=1, indent=0}).
+-record(state, {nexttmp=1, nextlabel=1, indent=0, globalscope}).
+
+-define(FUNPREFIX, "fun_").
 
 %% @doc A value that is subject to pattern matching
 -record(subject, {value :: string(),       %% a C expression
@@ -26,7 +28,7 @@ compile(String, Verbose) ->
 		Verbose andalso io:format("Tree:~n~p~n", [Tree]),
 		{ok, Annotated} = lsrtyper:annotate(Tree),
 		Verbose andalso io:format("Annotated tree:~n~p~n", [Annotated]),
-		{ok, c_prog(Annotated, Verbose)}
+		{ok, c_module(Annotated, Verbose)}
 	catch
 		error:{badmatch, {error, Error}} ->
 			Message1 = case Error of
@@ -40,6 +42,119 @@ compile(String, Verbose) ->
 			end,
 			{error, Message1}
 	end.
+
+c_module(Module = #module{defs = Defs, types = Scope}, MemDebug) ->
+	% 1. Compile all Defs.
+	FunDeclsAndDefs = [c_fundef(Name, Funs, #state{globalscope = Scope}) ||
+	                   {Name, Funs} <- Defs],
+	DeclsC = [Decl || {Decl, _} <- FunDeclsAndDefs],
+	DefsC  = [Code || {_, Code} <- FunDeclsAndDefs],
+	MainC = case orddict:find("main", Defs) of
+		{ok, Def} -> c_main(Def);
+		error -> []
+	end,
+	Output =
+	[case MemDebug of
+		true -> "#define LSR_MONITOR_ALLOC\n";
+		false -> []
+	 end,
+	 "#include \"runtime/runtime.h\"\n",
+	 "\n",
+	 DeclsC,
+	 "\n",
+	 DefsC,
+	 "\n",
+	 MainC],
+	% 2. If there's a "main", create a main c function
+	list_to_binary(Output).
+
+c_main(Def) ->
+	["/* main() todo */"].
+
+-spec c_fundef(Name::string(), Funs::funs()) -> {FuncProto::iolist(); FuncDef::iolist()}.
+c_fundef(Name, Funs = #funcons{head = #'fun'{numparams = Arity}}, State) ->
+	%% 1. Create param var names param1, ..., paramN
+	%% 2. Compile a multi-pattern case construct, matched against the params.
+	ParamNames = lists:map(fun(N) -> "param" ++ integer_to_list(N) end, lists:seq(1, Arity)),
+	ParamDecls = lists:map(fun(Name) -> "lsr_t * " ++ Name end, ParamNames),
+	Head = ["lsr_t * ", ?FUNPREFIX, Name, "(", string:join(", ", ParamDecls), ")"],
+	ClausesCode = c_funclauses(Name, Funs, ParamNames, indent_more(State)),
+	%% TODO
+	%% * Funktion börjar, ta emot params
+	%% * För varje clause:
+	%%   * För varje param:
+	%%     * Skapa #subject{value=<paramvar>, type=any, faillabel = <nästa clause>}
+	%%   * Om alla patterns matchar:
+	%%     * Discard vars not used in this clause (but there aren't any)
+	%%     * Bind variabler i params-patterns
+	%%     * Kör Body
+	%%     * Sätt return-variabel (returnvar)
+	%%     * Hoppa till return-label (returnlabel)
+	%%   * Annars:
+	%%     * Hoppa till nästa clause
+	%%   * Om ingen clause matchar -> error
+	%% * Frigör params
+	%% * Return
+	todo.
+
+c_funclauses(Name, nil, _, _) ->
+	[indent(1),
+	 "lsr_error(\"No matching function clause: ", Name, "\");\n"],
+c_funclauses(Name, #funcons{head = Fun, tail = Funs}, ParamNames,
+             State = #state{indent = Indent}) ->
+	{NextLabel, State1} = new_label(State, "next_funclause"),
+	{FunCode, State2} = c_fun(Fun, ParamNames, NextLabel, State1),
+	[FunCode,
+	 indent(Indent - 1), NextLabel, ":\n" |
+	 c_funclauses(Name, Funs, ParamNames, State2)].
+
+c_fun(Fun = #'fun'{params = ParamPatterns, body = BodyExpr},
+      ParamValues, FailLabel, State) ->
+	Subjects = lists:map(fun(ParamValue) -> #subject{value = ParamValue,
+	                                                 type = any,
+	                                                 faillabel = FailLabel}
+	                     end,
+	                     ParamValues),
+	{MatchDecl, MatchCode, BindDecl, BindCode, State1} =
+		c_match_each(ParamPatterns, Subjects, State),
+	%,
+
+%% matches each pattern against the corresponding subject
+-spec c_match_each(exprs(), [#subject{}], #state{}) ->
+	{iolist(), iolist(), iolist(), iolist(), state()}.
+c_match_each(nil, [], State) ->
+	{[], [], [], [], State};
+c_match_each(#cons{head = Pattern, tail = Patterns, accessed = _A},
+             [Subj | Subjs], State) ->
+	{MatchDecl, MatchCode,
+	 BindDecl, BindCode, State1} = c_match(Pattern, Subj, State),
+	{MatchDecls, MatchCodes,
+	 BindDecls, BindCodes, State2} = c_match_each(Patterns, Subjs, State1),
+	{[MatchDecl | MatchDecls], [MatchCode | MatchCodes],
+	 [BindDecl | BindDecls], [BindCode | BindCodes], State2}.
+
+%% For comparison: this is the #'case'{} part of c/2
+c_case(#expr{body = #'case'{test = Subj = #expr{type = SubjType}, rules = Rules},
+             type = RetType},
+       State = #state{indent = Indent}) ->
+	{Decl1, Code1, SubjVar, State1} = c(Subj, State),
+	Subject = #subject{value = SubjVar,
+	                   type = SubjType},
+	{AfterLabel, State2} = new_label(State1, "_after_case"),
+	{RetVar, State3} = new_tmpvar(State2, "_case_result"),
+	RetDecl = decl(RetVar, RetType, Indent),
+	{Decl2, Code2, State4} = c_rules(Rules, Subject,
+	                                 RetVar, AfterLabel, State3),
+	Code3 = [indent(Indent - 1), AfterLabel, ":\n"],
+	{[Decl1, RetDecl, Decl2],
+	 [indent(Indent), "/* case subject (", SubjVar, ") */\n",
+	  Code1,
+	  indent(Indent), "/* case ", SubjVar, " of ... */\n",
+	  Code2,
+	  Code3],
+	 RetVar,
+	 State4}.
+
 
 c_prog(Expr = #expr{type = Type, accessed = _OuterVars = []},
        MemDebug) ->
@@ -65,7 +180,7 @@ c_prog(Expr = #expr{type = Type, accessed = _OuterVars = []},
 	 case Type of
 		string -> [];
 		_      -> [indent(Indent), "lsr_assert_string(", RetVar, ");\n"]
-	 end,	
+	 end,
 	 indent(Indent), "printf(\"%s\\n\", lsr_chars(", RetVar, "));\n",
 	 indent(Indent), "lsr_free_unused(", RetVar, ");\n",
 	 case MemDebug of
@@ -98,8 +213,7 @@ incref(_, boolean) -> [];
 incref(VarName, _) -> [" lsr_incref(", VarName, ");"].
 
 
-%% @doc Check a value (c variable) against a pattern. The SuccessBool is a
-%% c bool expression indicating success.
+%% @doc Check a value (c variable) against a pattern.
 -spec c_match(Pattern::#expr{}, #subject{}, #state{}) ->
       {MatchDecl::iolist(), MatchCode::iolist(),
        BindDecl::iolist(), BindCode::iolist(), #state{}}.
@@ -429,8 +543,8 @@ c_rules(#rulecons{head = #rule{pat = Pattern, expr = Body}, tail = Tail},
 	{MatchDecl, MatchCode,
 	 BindDecl, BindCode, State2} = c_match(Pattern, Subject1, State1),
 	%% Free vars not used anymore if this cases matches
-	VarsUnusedInBody = lsrvarsets:subtract(lsrtyper:rules_get_accessed(Tail),
-	                                       lsrtyper:get_accessed(Body)),
+	VarsUnusedInBody = ordsets:subtract(lsrtyper:rules_get_accessed(Tail),
+	                                    lsrtyper:get_accessed(Body)),
 	DiscardCode = discard_vars(VarsUnusedInBody, Indent + 1),
 	{BodyDecl, BodyCode, BodyRetVar, State3} = c(Body, indent_more(State2)),
 	BodyCode2 =
@@ -446,14 +560,14 @@ c_rules(#rulecons{head = #rule{pat = Pattern, expr = Body}, tail = Tail},
 			%% No match code means this case always matches. Skip the rest of the cases.
 			%% This is an optimization only.
 			{[],
-			 [indent(Indent), "/* the previous cases always matches, so no more cases here. */\n"],
+			 [indent(Indent), "/* the previous case always matches, so no more cases here. */\n"],
 			 State4};
 		_ ->
 			%% Discard vars used only in the pattern and expr that didn't match
 			VarsUsusedAfterCase =
-				lsrvarsets:subtract(lsrvarsets:union(lsrtyper:get_accessed(Body),
-				                                     lsrtyper:get_accessed(Pattern)),
-				                    lsrtyper:rules_get_accessed(Tail)),
+				ordsets:subtract(ordsets:union(lsrtyper:get_accessed(Body),
+				                               lsrtyper:get_accessed(Pattern)),
+				                 lsrtyper:rules_get_accessed(Tail)),
 			DiscardOnMismatchCode = discard_vars(VarsUsusedAfterCase, Indent),
 			%% Recursively handle the rest of the cases
 			{TailDecl, TailCode, State5} = c_rules(Tail, Subject, RetVar, AfterLabel, State4),
@@ -503,8 +617,8 @@ c(#expr{body = #'if'{'cond' = E1 = #expr{type = T1},
   State = #state{indent=Indent}) ->
 	% TODO Free the input values (i.e. the condition).
 	% Free all vars in the dead branch which would be last accessed there.
-	AccessedInElseOnly = lsrvarsets:subtract(A3, A2),
-	AccessedInThenOnly = lsrvarsets:subtract(A2, A3),
+	AccessedInElseOnly = ordsets:subtract(A3, A2),
+	AccessedInThenOnly = ordsets:subtract(A2, A3),
 	Discard2 = discard_vars(AccessedInElseOnly, Indent + 1),
 	Discard3 = discard_vars(AccessedInThenOnly, Indent + 1),
 	% TODO Push new local scope to state.
@@ -566,7 +680,7 @@ c(#expr{body = #binop{op = seq, left = E1, right = E2}},
 			[];
 		_ ->
 			Accesses = lsrtyper:get_accessed(E2),
-			case lsrvarsets:is_element(DeadVar, Accesses) of
+			case ordsets:is_element(DeadVar, Accesses) of
 				false -> [indent(Indent), "lsr_free_unused(", DeadVar, ");\n"];
 				true  -> [] % DeadVar will be used later, so refc can't be zero here.
 			end
