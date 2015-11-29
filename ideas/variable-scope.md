@@ -29,9 +29,10 @@ matching operator, `=`, the scope can be defined to be the rest of that sequence
 expressions.
 
 ```
-  x = 42
-  y = (z = 9 ; x + z)
-  # Here x = 42, y = 51 and z is free
+  do x = 42
+     y = do z = 9
+            x + z
+     # Here x = 42, y = 51 and z is free
 ```
 
 This is similar to a `let` construct in Haskell and ML, but also to the
@@ -48,17 +49,15 @@ which introduces a new local scope.
 Example, with `y` local in the `then` clause:
 
 ```
-  if x > 2 then (y = x * x; y + 24) else 0
+  if x > 2 then do { y = x * x; y + 24 } else 0
 ```
 
 or equivallently, given we have an indentation-aware grammar:
 
 ```
-  if x > 2 then
-  	y = x * x
-  	y + 24
-  else
-  	0
+  if x > 2 then do y = x * x
+  	           y + 24
+           else 0
 ```
 
 What about `and` and `or`, with short-circuit evaluation? The same.

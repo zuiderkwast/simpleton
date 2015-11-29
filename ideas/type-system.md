@@ -29,6 +29,35 @@ any type a.
 When the exact type is known at compile time, unboxed values may well be used
 by the compiler for some of the scalar types (numbers, booleans, null).
 
+Polymorphism as optimisation
+----------------------------
+
+Multiple represenations of values that in the language is the same type.
+
+* Term (unknown type, boxed value);
+* fixnum, boolean, double (for unboxed representation).
+
+String types:
+
+* Short strings (up to 6 bytes, encoded in the value without allocation),
+* allocated strings,
+* string constantes (containing eller consists of string constantes in C).
+
+Array types:
+
+* Array of values, parameterized in the common super-type T of the elements;
+* slice of values, parameterized in the element type T;
+* array of fixnums (32bit integers)
+* array of bytes (for binary data)
+* array of fixed length (tuple), parameterized in its length and the type of
+  each element. See [tuples](tuples.md) for how this can be used for
+  optimizations.
+
+Dict:
+
+* Dict parameterized in the types of the keys and the values;
+* Dict with fixed keys and the type of each value...
+
 Type system milestone 1
 -----------------------
 
